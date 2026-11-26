@@ -2,6 +2,13 @@
   "name": "model-maker",
   "private": true,
   "type": "module",
-  "scripts": { "build": "esbuild src/main.ts --bundle --format=esm --minify --target=es2020,safari15 --outfile=app.js" },
-  "devDependencies": { "esbuild": "^0.25.0", "three": "0.187.0", "@types/three": "0.187.0", "typescript": "^5.6.0" }
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --format=esm --minify --target=es2020,safari15 --outfile=app.js && esbuild src/sheet.ts --bundle --format=esm --minify --target=es2020,safari15 --outfile=sheet.js && esbuild src/sample.ts --bundle --format=esm --minify --target=es2020,safari15 --outfile=sample.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "three": "0.187.0",
+    "@types/three": "0.187.0",
+    "typescript": "^5.6.0"
+  }
 }

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0a0d12">
+<title>ELEMENT 118 SHEET → 3D</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<header class="top">
+  <h1>E118 <b>SHEET → 3D</b></h1>
+  <a class="badge" href="./index.html">画像1枚モード</a>
+</header>
+
+<div class="stage" id="stage">
+  <div class="empty" id="empty">設計シートを読み込んで「3D生成」すると、ここに出ます</div>
+  <div class="info" id="info"></div>
+  <div class="iou" id="iou" hidden></div>
+  <div class="views" id="views">
+    <button data-view="front">FRONT</button><button data-view="right">RIGHT</button><button data-view="back">BACK</button><button data-view="left">LEFT</button><button data-view="top">TOP</button>
+  </div>
+</div>
+<div class="toggles" id="toggles">
+  <label><input type="checkbox" id="tMesh" checked>メッシュ</label>
+  <label><input type="checkbox" id="tWire">線</label>
+  <label><input type="checkbox" id="tJoint" checked>関節</label>
+  <label><input type="checkbox" id="tBone" checked>ボーン</label>
+  <label><input type="checkbox" id="tOverlay" checked>重ね合わせ</label>
+  <input type="range" id="overlayOpacity" min="0.1" max="0.9" step="0.05" value="0.45" aria-label="重ね合わせの濃さ">
+</div>
+
+<main>
+  <section class="card">
+    <h2><i>1</i>設計シートを選ぶ</h2>
+    <div class="sheetPick">
+      <label class="drop small" id="drop1"><input type="file" id="file1" accept="image/png,image/*"><img id="prev1" alt=""><span>SHEET 1<br><small>APPEARANCE / SHAPE</small></span></label>
+      <label class="drop small" id="drop2"><input type="file" id="file2" accept="image/png,image/*"><img id="prev2" alt=""><span>SHEET 2<br><small>STRUCTURE / RIG</small></span></label>
+    </div>
+    <div class="row2 gap">
+      <button class="secondary" id="btnSample">サンプルで試す</button>
+      <a class="secondary" href="./docs/SHEET_SPEC_V1.md" target="_blank">規格書（Sheet V1）</a>
+    </div>
+    <p class="note">透明PNGは「ファイルを選択」から選ぶと透過が保たれます。</p>
+    <button class="primary" id="btnAnalyze" disabled>解析</button>
+  </section>
+
+  <section class="card" id="secResult" hidden>
+    <h2><i>2</i>解析結果</h2>
+    <div class="viewGrid" id="viewGrid"></div>
+    <div class="warnings" id="warnings"></div>
+  </section>
+
+  <section class="card" id="secJoints" hidden>
+    <h2><i>3</i>関節（指でドラッグして修正）</h2>
+    <p class="note" id="jointSummary"></p>
+    <div class="jointPair">
+      <div><div class="cap">FRONT（x・y）</div><canvas id="jFront"></canvas></div>
+      <div><div class="cap">RIGHT（z・y）</div><canvas id="jRight"></canvas></div>
+    </div>
+    <div class="legend" id="legend"></div>
+    <div class="row2"><button class="secondary" id="btnJointReset">検出結果に戻す</button></div>
+  </section>
+
+  <section class="card" id="secHull" hidden>
+    <h2><i>4</i>3D生成（Visual Hull）</h2>
+    <p class="note">5方向のシルエットの共通部分を削り出した「形状測定用」の立体です。次の段階でこれを目標に Element 118 Base Mesh を変形します（これ自体は最終キャラではありません）。</p>
+    <div class="ctrl"><span>品質</span>
+      <select id="quality"><option value="64">LIGHT</option><option value="96" selected>STANDARD</option><option value="128">HIGH</option></select>
+    </div>
+    <div class="ctrl"><span>ずれの許容</span><input type="range" id="tolerance" min="0" max="0.03" step="0.002" value="0"><output></output></div>
+    <p class="note">「ずれの許容」は、ビュー同士の絵が少しずれていて腕や脚が欠ける時だけ上げてください（上げるほど全体が太ります）。一致しないビューはチェックを外して除外できます。</p>
+    <div class="useViews" id="useViews">
+      <label><input type="checkbox" data-v="front" checked>FRONT</label>
+      <label><input type="checkbox" data-v="right" checked>RIGHT</label>
+      <label><input type="checkbox" data-v="back" checked>BACK</label>
+      <label><input type="checkbox" data-v="left" checked>LEFT</label>
+      <label><input type="checkbox" data-v="top" checked>TOP</label>
+    </div>
+    <button class="primary" id="btnHull">3D生成</button>
+    <div class="iouTable" id="iouTable"></div>
+    <button class="secondary wide" id="btnHullGlb" hidden>Visual Hull を GLB で保存（確認用）</button>
+  </section>
+</main>
+
+<div class="toast" id="toast" hidden></div>
+<script type="module" src="./sheet.js"></script>
+</body>
+</html>

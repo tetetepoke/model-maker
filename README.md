@@ -2,7 +2,9 @@
 
 iPhone の Safari だけで、画像からゲーム用の3Dモデル（GLB）を作る単体アプリ。完全クライアントサイド（GPU・サーバー・有料API不要）で、静的ホスティング（GitHub Pages 等）で動く。ゲーム本体（ELEMENT 118）とは別アプリ。
 
+
 - 公開URL：https://tetetepoke.github.io/model-maker/
+- 設計シート → 3D：https://tetetepoke.github.io/model-maker/sheet.html
 - 開く：`index.html`（`app.js` はビルド済み。そのまま配信するだけで動く）
 - 開発：`npm install && npm run build`（`src/*.ts` → `app.js`）
 
@@ -17,6 +19,17 @@ iPhone の Safari だけで、画像からゲーム用の3Dモデル（GLB）を
 6. GLB 書き出し（テクスチャ・法線マップ内蔵、底辺中心が原点、正面＝+Z、実寸m）。Three.js の GLTFLoader でそのまま読める
 
 アイテムIDの候補は `src/items.ts`（入力補助と実寸合わせ用。自由に編集）。
+
+## Element 118 設計シート → 3D（sheet.html）
+Element 118 Sheet V1 規格（`docs/SHEET_SPEC_V1.md`）の2枚の設計シートから3Dキャラクターを作る正式ルート。
+1. SHEET 1（APPEARANCE / SHAPE）と SHEET 2（STRUCTURE / RIG）を選ぶ（「サンプルで試す」で `samples/` の見本を読み込める）
+2. 解析：FRONT / RIGHT / BACK / LEFT / TOP / PARTS のシルエット、関節マーカー（色＋固定ID＋位置）→ 17関節の3D座標
+3. 関節はFRONT・RIGHTの図の上で指でドラッグして修正
+4. 3D生成：5方向シルエットから Visual Hull（形状測定用）。FRONT〜TOP のボタンで正投影に切り替え、元シルエットを半透明で重ねて一致度（IoU）を表示
+
+実装済み：Phase 1（規格・読み込み・解析）、Phase 2（Visual Hull・重ね合わせ比較）
+次：Phase 3 Base Mesh fitting → Phase 4 Skeleton / Skinning → Phase 5 テクスチャ・GLB
+すべてブラウザ内の画像解析＋幾何計算（AI・外部API・GPUサーバー不使用）。`sample.html` はサンプルシート生成用の開発ページ。
 
 ## 次のステップ（未実装）
 三面図、基本形状の組み合わせ、キャラクター／モンスター／建物モード、自動ボーン。
