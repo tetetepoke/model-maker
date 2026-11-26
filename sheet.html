@@ -48,6 +48,11 @@
 
   <section class="card" id="secResult" hidden>
     <h2><i>2</i>解析結果</h2>
+    <div class="cap">検出した領域（シート上の位置）</div>
+    <div class="regionPair"><canvas id="reg1"></canvas><canvas id="reg2"></canvas></div>
+    <div class="seg small" id="previewMode">
+      <button data-v="raw">元画像</button><button data-v="mask" class="on">抽出シルエット</button><button data-v="norm">正規化後</button>
+    </div>
     <div class="viewGrid" id="viewGrid"></div>
     <div class="warnings" id="warnings"></div>
   </section>
@@ -56,8 +61,8 @@
     <h2><i>3</i>関節（指でドラッグして修正）</h2>
     <p class="note" id="jointSummary"></p>
     <div class="jointPair">
-      <div><div class="cap">FRONT（x・y）</div><canvas id="jFront"></canvas></div>
-      <div><div class="cap">RIGHT（z・y）</div><canvas id="jRight"></canvas></div>
+      <div><div class="cap">SHEET 2 FRONT（x・y）</div><canvas id="jFront"></canvas></div>
+      <div><div class="cap">SHEET 2 RIGHT（z・y）</div><canvas id="jRight"></canvas></div>
     </div>
     <div class="legend" id="legend"></div>
     <div class="row2"><button class="secondary" id="btnJointReset">検出結果に戻す</button></div>

@@ -115,3 +115,10 @@ a.secondary { text-decoration: none; display: inline-block; }
 .iouTable .bar i { display: block; height: 100%; background: var(--acc); }
 .iouTable .low i { background: var(--warn); }
 .secondary.wide { width: 100%; margin-top: 10px; }
+
+.regionPair { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+.regionPair canvas { width: 100%; height: auto; background: #0b0f14; border-radius: 8px; }
+.seg.small { margin: 4px 0 8px; }
+.seg.small button { padding: 6px 4px; font-size: 12px; font-weight: 600; }
+.iouAvg { font-weight: 700; color: var(--text); }
+.partSel { background: #0b0f14; border: 1px solid var(--line); border-radius: 6px; font-size: 10px; padding: 1px 2px; color: var(--acc); }

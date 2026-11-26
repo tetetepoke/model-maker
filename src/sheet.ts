@@ -5,8 +5,8 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { buildHull, type HullResult } from './hull';
 import { loadImage, type SourceImage } from './mask';
-import { denorm, fillMissingJoints, parseSheet1, parseSheet2, type Joints, type Sheet1, type Sheet2, type ViewId } from './sheetParse';
-import { ALL_JOINTS, BONES, MARKERS, markerOf, PARTS_LABELS, rgbHex, SHEET1_CELLS, type JointId } from './sheetSpec';
+import { denorm, fillMissingJoints, parseSheet1, parseSheet2, type Joints, type PartId, type Sheet1, type Sheet2, type ViewId } from './sheetParse';
+import { ALL_JOINTS, BONES, MARKERS, markerOf, PART_IDS_ALL, rgbHex, type JointId } from './sheetSpec';
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector(s) as T;
 const VIEW_IDS: ViewId[] = ['front', 'right', 'back', 'left', 'top'];
@@ -195,60 +195,128 @@ function analyze() {
   if (!state.img1) return;
   state.s1 = parseSheet1(state.img1);
   state.s2 = state.img2 ? parseSheet2(state.img2) : null;
-  const frontForEst = state.s1.views.front?.src;
-  state.detected = fillMissingJoints(state.s2?.joints ?? {}, frontForEst);
-  state.joints = structuredClone(state.detected);
+  // 関節の入力元は SHEET 2 だけ（SHEET 1 からは探さない）
+  state.detected = state.s2 ? fillMissingJoints(state.s2.joints, state.s2.front?.src) : null;
+  state.joints = state.detected ? structuredClone(state.detected) : null;
   renderResult();
-  ['#secResult', '#secJoints', '#secHull'].forEach(s => { $(s).hidden = false; });
+  ['#secResult', '#secHull'].forEach(s => { $(s).hidden = false; });
+  $('#secJoints').hidden = !state.joints;
   drawJointEditors();
   buildJoints3D();
   generateHull();
 }
 
+let previewMode: 'raw' | 'mask' | 'norm' = 'mask';
+document.querySelectorAll<HTMLButtonElement>('#previewMode button').forEach(b => {
+  b.onclick = () => {
+    previewMode = b.dataset.v as typeof previewMode;
+    document.querySelectorAll<HTMLButtonElement>('#previewMode button').forEach(x => x.classList.toggle('on', x === b));
+    renderResult();
+  };
+});
+
+/** シート全体の縮小図に、検出した領域の枠とラベルを描く */
+function drawRegions(cv: HTMLCanvasElement, sheet: HTMLCanvasElement | null, regions: { label: string; box: { x0: number; y0: number; x1: number; y1: number } }[]) {
+  if (!sheet) { cv.width = 1; cv.height = 1; return; }
+  const s = Math.min(1, 640 / sheet.width);
+  cv.width = Math.round(sheet.width * s); cv.height = Math.round(sheet.height * s);
+  const ctx = cv.getContext('2d')!;
+  ctx.fillStyle = '#1a2230'; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.drawImage(sheet, 0, 0, cv.width, cv.height);
+  ctx.lineWidth = 2; ctx.font = `bold ${Math.max(9, Math.round(cv.width / 45))}px sans-serif`;
+  for (const r of regions) {
+    const col = r.label.startsWith('PARTS') ? '#ffb547' : r.label.startsWith('JOINT') ? '#ff5dd6' : '#36e3c4';
+    ctx.strokeStyle = col; ctx.strokeRect(r.box.x0 * s, r.box.y0 * s, (r.box.x1 - r.box.x0) * s, (r.box.y1 - r.box.y0) * s);
+    const t = r.label.replace('PARTS:', '');
+    ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(r.box.x0 * s, r.box.y0 * s - 2, ctx.measureText(t).width + 6, Math.max(11, cv.width / 40));
+    ctx.fillStyle = col; ctx.fillText(t, r.box.x0 * s + 3, r.box.y0 * s + Math.max(8, cv.width / 50));
+  }
+}
+
 function renderResult() {
+  drawRegions($('#reg1') as HTMLCanvasElement, state.img1, state.s1?.regions ?? []);
+  drawRegions($('#reg2') as HTMLCanvasElement, state.img2, state.s2?.regions ?? []);
   const g = $('#viewGrid'); g.innerHTML = '';
-  const add = (label: string, src: SourceImage | undefined) => {
+  const W = state.s1?.views.front ? state.s1.views.front.src.w / state.s1.views.front.src.h : 1;
+  const add = (label: string, view: { src: SourceImage; raw: HTMLCanvasElement } | undefined, kind: 'side' | 'top' | 'part' = 'side', partId?: PartId) => {
     const fig = document.createElement('figure');
     const cv = document.createElement('canvas');
-    if (src) {
-      const s = Math.min(1, 240 / Math.max(src.w, src.h));
-      cv.width = Math.max(1, Math.round(src.w * s)); cv.height = Math.max(1, Math.round(src.h * s));
+    const src = view?.src;
+    if (view && previewMode === 'raw') {
+      const r = view.raw, s = Math.min(1, 240 / Math.max(r.width, r.height));
+      cv.width = Math.max(1, Math.round(r.width * s)); cv.height = Math.max(1, Math.round(r.height * s));
+      cv.getContext('2d')!.drawImage(r, 0, 0, cv.width, cv.height);
+    } else if (src && previewMode === 'mask') {
+      cv.width = src.w; cv.height = src.h;
       const ctx = cv.getContext('2d')!;
-      ctx.drawImage(src.canvas, 0, 0, cv.width, cv.height);
-      // シルエット（マスク）の縁を水色で表示
-      const md = ctx.createImageData(cv.width, cv.height);
-      for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) {
-        const mx = Math.floor(x / s), my = Math.floor(y / s);
-        const on = src.mask[my * src.w + mx];
-        const edge = on && (!src.mask[my * src.w + Math.min(src.w - 1, mx + Math.ceil(1 / s))] || !src.mask[Math.min(src.h - 1, my + Math.ceil(1 / s)) * src.w + mx] || !src.mask[my * src.w + Math.max(0, mx - Math.ceil(1 / s))] || !src.mask[Math.max(0, my - Math.ceil(1 / s)) * src.w + mx]);
-        if (edge) { const i = (y * cv.width + x) * 4; md.data[i] = 54; md.data[i + 1] = 227; md.data[i + 2] = 196; md.data[i + 3] = 255; }
+      const img = ctx.createImageData(src.w, src.h);
+      for (let i = 0; i < src.w * src.h; i++) { const v = src.mask[i] ? 235 : 0; img.data[i * 4] = src.mask[i] ? 54 : 0; img.data[i * 4 + 1] = v; img.data[i * 4 + 2] = src.mask[i] ? 196 : 0; img.data[i * 4 + 3] = src.mask[i] ? 255 : 0; }
+      ctx.putImageData(img, 0, 0);
+    } else if (src && previewMode === 'norm') {
+      // 正規化後：身長 = 100px にそろえ、足底線と中心軸を描く（どのビューも同じ尺度）
+      const U = 110;
+      cv.width = 170; cv.height = 136;
+      const ctx = cv.getContext('2d')!;
+      const dw = kind === 'top' ? W * U : (src.w / src.h) * U, dh = kind === 'top' ? (src.h / src.w) * W * U : U;
+      const x = (cv.width - dw) / 2, y = kind === 'top' ? (cv.height - dh) / 2 : cv.height - 12 - dh;
+      ctx.globalAlpha = 0.9; ctx.drawImage(src.canvas, x, y, dw, dh); ctx.globalAlpha = 1;
+      ctx.strokeStyle = '#36e3c4'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(cv.width / 2, 0); ctx.lineTo(cv.width / 2, cv.height); ctx.stroke();
+      if (kind !== 'top') {
+        ctx.strokeStyle = '#ffb547';
+        ctx.beginPath(); ctx.moveTo(0, cv.height - 12); ctx.lineTo(cv.width, cv.height - 12); ctx.moveTo(0, cv.height - 12 - U); ctx.lineTo(cv.width, cv.height - 12 - U); ctx.stroke();
       }
-      const tmp = document.createElement('canvas'); tmp.width = cv.width; tmp.height = cv.height;
-      tmp.getContext('2d')!.putImageData(md, 0, 0);
-      ctx.drawImage(tmp, 0, 0);
-    } else fig.classList.add('miss');
+    }
+    if (!view) fig.classList.add('miss');
     const cap = document.createElement('figcaption');
-    cap.textContent = label + (src ? '' : '（なし）');
+    if (kind === 'part' && partId) {
+      // パーツIDは自動判定が外れることがあるので、ここで付け替えられる
+      const sel = document.createElement('select');
+      sel.className = 'partSel';
+      for (const id of PART_IDS_ALL) { const o = document.createElement('option'); o.value = id; o.textContent = id.toUpperCase(); sel.appendChild(o); }
+      sel.value = partId;
+      sel.onchange = () => {
+        const parts = state.s1!.parts;
+        const to = sel.value as PartId, me = parts[partId]!;
+        const other = parts[to];
+        delete parts[partId];
+        if (other) parts[partId] = other; // 付け替え先にすでにあれば入れ替え
+        parts[to] = me;
+        for (const r of state.s1!.regions) {
+          if (r.box === me.box) r.label = 'PARTS:' + to.toUpperCase();
+          else if (other && r.box === other.box) r.label = 'PARTS:' + partId.toUpperCase();
+        }
+        renderResult();
+      };
+      cap.append('PARTS ', sel);
+    } else cap.textContent = label + (view ? '' : '（なし）');
     fig.append(cv, cap);
     g.appendChild(fig);
   };
-  for (const c of SHEET1_CELLS) add(c.label, state.s1!.views[c.id as ViewId]?.src);
-  for (const [k, v] of Object.entries(state.s1!.parts)) add('PARTS: ' + PARTS_LABELS[k as keyof typeof PARTS_LABELS], v?.src);
+  for (const id of VIEW_IDS) add('認識した' + VIEW_LABEL[id], state.s1!.views[id], id === 'top' ? 'top' : 'side');
+  if (state.s2) { add('SHEET2 FRONT', state.s2.front); add('SHEET2 RIGHT', state.s2.right); }
+  for (const [k, v] of Object.entries(state.s1!.parts)) add('PARTS', v, 'part', k as PartId);
+  renderWarnings();
+}
+
+function renderWarnings() {
   const w = $('#warnings'); w.innerHTML = '';
-  const msgs = [...state.s1!.warnings, ...(state.s2?.warnings ?? (state.img2 ? [] : ['SHEET 2 が未選択のため、関節はすべてシルエットから推定しています']))];
+  const msgs = [...state.s1!.warnings, ...(state.s2?.warnings ?? ['SHEET 2 が未選択のため、関節・骨格は作りません（関節の入力元は SHEET 2 だけです）'])];
   if (!msgs.length) w.innerHTML = '<div class="ok">規格どおりに読み取れました</div>';
   msgs.forEach(m => { const d = document.createElement('div'); d.textContent = '⚠ ' + m; w.appendChild(d); });
-  const found = state.s2?.found ?? 0;
-  $('#jointSummary').textContent = `マーカーから検出：${found} / ${ALL_JOINTS.length}（残りはシルエットから推定）。奥行き（z）をマーカーで決めた関節：${ALL_JOINTS.filter(id => state.joints![id].zSource === 'marker').length}`;
+  if (state.joints) {
+    const found = state.s2?.found ?? 0;
+    $('#jointSummary').textContent = `SHEET 2 のマーカーから検出：${found} / ${ALL_JOINTS.length}（点線の丸は推定。指で修正できます）。奥行き（z）をマーカーで決めた関節：${ALL_JOINTS.filter(id => state.joints![id].zSource === 'marker').length}`;
+  }
   const lg = $('#legend'); lg.innerHTML = '';
-  for (const m of MARKERS) { const s = document.createElement('span'); s.innerHTML = `<i style="background:${rgbHex(m.rgb)}"></i>${m.key}`; lg.appendChild(s); }
+  for (const m of MARKERS) { const sp = document.createElement('span'); sp.innerHTML = `<i style="background:${rgbHex(m.rgb)}"></i>${m.key}`; lg.appendChild(sp); }
 }
 
 // ------------------------------------------------------------------ 3. 関節の修正（ドラッグ）
 interface Editor { cv: HTMLCanvasElement; src: SourceImage; side: boolean; scale: number }
 const editors: Editor[] = [];
 function editorSource(side: boolean): SourceImage | undefined {
-  return side ? (state.s2?.right?.src ?? state.s1?.views.right?.src) : (state.s2?.front?.src ?? state.s1?.views.front?.src);
+  return side ? state.s2?.right?.src : state.s2?.front?.src;
 }
 function drawJointEditors() {
   editors.length = 0;
@@ -376,9 +444,11 @@ function renderIou(res: HullResult) {
   const t = $('#iouTable');
   const rows = VIEW_IDS.filter(id => res.iou[id] !== undefined).map(id => {
     const p = res.iou[id]! * 100;
-    return `<tr class="${p < 85 ? 'low' : ''}"><td>${VIEW_LABEL[id]}</td><td style="width:50%"><div class="bar"><i style="width:${p.toFixed(0)}%"></i></div></td><td>${p.toFixed(1)}%</td></tr>`;
+    return `<tr class="${p < 90 ? 'low' : ''}"><td>${VIEW_LABEL[id]}</td><td style="width:50%"><div class="bar"><i style="width:${p.toFixed(0)}%"></i></div></td><td>${p.toFixed(1)}%</td></tr>`;
   }).join('');
-  t.innerHTML = `<div class="cap">元シルエットとの一致度（IoU）。85%未満は、ビュー同士の形・縮尺・中心がずれている可能性があります</div><table>${rows}</table>`;
+  const vals = VIEW_IDS.map(id => res.iou[id]).filter((v): v is number => v !== undefined);
+  const avg = vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length) * 100 : 0;
+  t.innerHTML = `<div class="cap">元シルエットとの一致度（IoU）。90%未満は、ビュー同士の形・縮尺・中心がずれている可能性があります</div><table>${rows}<tr class="${avg < 90 ? 'low' : ''}"><td class="iouAvg">平均</td><td><div class="bar"><i style="width:${avg.toFixed(0)}%"></i></div></td><td class="iouAvg">${avg.toFixed(1)}%</td></tr></table>`;
 }
 
 $('#btnHullGlb').onclick = async () => {

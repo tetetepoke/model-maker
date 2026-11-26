@@ -21,6 +21,8 @@ export const PARTS_SLOTS = ['hair', 'hat', 'backpack', 'weapon', 'accessory', 'e
 export const PARTS_LABELS: Record<(typeof PARTS_SLOTS)[number], string> = {
   hair: 'HAIR', hat: 'HAT', backpack: 'BACKPACK', weapon: 'WEAPON', accessory: 'ACCESSORY', extra: 'EXTRA',
 };
+/** パーツの固定ID（将来の拡張を含む全リスト。解析後に手動で付け替えるときの選択肢） */
+export const PART_IDS_ALL = ['hair', 'head', 'face', 'hat', 'goggles', 'scarf', 'upper_cloth', 'lower_cloth', 'belt', 'backpack', 'shoes', 'weapon', 'accessory', 'extra'] as const;
 export const PARTS_AREA = { x0: 0.25, y0: 0.72, x1: 1.0, y1: 1.0 };
 export const partsCells = (): Cell[] => PARTS_SLOTS.map((id, i) => {
   const w = (PARTS_AREA.x1 - PARTS_AREA.x0) / PARTS_SLOTS.length;
