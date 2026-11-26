@@ -4,7 +4,8 @@
 // 2. シルエットの行ごとの幅から、頭・首・胴体・腕・脚の比率を推定
 // 3. 頭＝Sphere、胴体・腰・足＝RoundedBox、首・腕・脚＝Capsule で人体パーツを組み、
 //    関節で重ねて1体につながったモデルにする
-// 4. 元画像は形にせず、正面から投影したテクスチャとして貼る
+// 4. 元画像は形にもUVにも使わない。体の部分ごとに代表色を取り出してマテリアルにする（顔だけ頭の前面に限定して貼る）
+// ※ AI による推定ではなく「画像解析＋プロシージャル生成」
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import type { SourceImage } from './mask';
@@ -101,7 +102,7 @@ export function isolateFigure(src: SourceImage): Figure {
 
 // ------------------------------------------------------------------ 比率の推定
 export const DEFAULT_PARAMS: CharParams = {
-  headW: 0.2, headH: 0.2, headDepth: 0.85, neckLen: 0.03, shoulderW: 0.3, torsoW: 0.26, torsoLen: 0.3, bodyDepth: 0.55,
+  headW: 0.2, headH: 0.2, headDepth: 0.92, neckLen: 0.03, shoulderW: 0.3, torsoW: 0.26, torsoLen: 0.3, bodyDepth: 0.55,
   armLen: 0.36, armThick: 0.07, armAngle: 12, legLen: 0.42, legThick: 0.09, legGap: 0.11,
 };
 
@@ -148,7 +149,8 @@ export function estimate(fig: Figure): CharParams {
   let headWpx = 0;
   for (let y = fig.top; y < neck; y++) headWpx = Math.max(headWpx, centerRun(y));
   const headH = clamp((neck - fig.top) / H, 0.12, 0.45);
-  const headW = clamp(headWpx / H, 0.1, 0.5);
+  // 頭の幅はハネた髪などで広がりやすいので、高さの 0.8〜1.15 倍に収める（横長の巨大な楕円にしない）
+  const headW = clamp(headWpx / H, headH * 0.8, headH * 1.15);
 
   // 腕：首〜股の間で左右に最も広がった幅。腕のない行の中心幅を胴体幅にする
   const hip = crotch > 0 ? crotch : Y(1 - legLen);
@@ -182,29 +184,167 @@ export function estimate(fig: Figure): CharParams {
   const neckLen = 0.025;
   const torsoLen = clamp(1 - legLen - headH - neckLen, 0.12, 0.6);
   return {
-    headW, headH, headDepth: 0.85, neckLen, shoulderW: Math.max(torsoW * 1.05, torsoW + armThick * 0.3), torsoW, torsoLen,
+    headW, headH, headDepth: 0.92, neckLen, shoulderW: Math.max(torsoW * 1.05, torsoW + armThick * 0.3), torsoW, torsoLen,
     bodyDepth: 0.55, armLen, armThick, armAngle, legLen, legThick, legGap,
   };
 }
 
+// ------------------------------------------------------------------ 色の解析
+// 画像は形にもUVにも使わない。体の各部分の範囲から「代表色」を取り出してパーツのマテリアルにする。
+export interface PartColors {
+  hair: string; skin: string; torso: string; pelvis: string;
+  upperArm: string; foreArm: string; hand: string; thigh: string; shin: string; foot: string;
+}
+export const COLOR_KEYS: (keyof PartColors)[] = ['hair', 'skin', 'torso', 'pelvis', 'upperArm', 'foreArm', 'hand', 'thigh', 'shin', 'foot'];
+
+interface Geo { H: number; cx: number; neckY: number; hipY: number; headWpx: number; torsoWpx: number; armRowY: number }
+
+function figGeo(fig: Figure, p: CharParams): Geo {
+  const H = fig.bottom - fig.top + 1;
+  const neckY = fig.top + p.headH * H;
+  const hipY = fig.bottom - p.legLen * H;
+  const armRowY = fig.top + (p.headH + p.neckLen) * H + p.armThick * H * 0.6;
+  return { H, cx: fig.cx, neckY, hipY, headWpx: p.headW * H, torsoWpx: p.torsoW * H, armRowY };
+}
+
+/** 矩形範囲の中で、線画の黒い線を避けて最も多い色を返す（輪郭から2px以上内側だけを見る） */
+function dominant(fig: Figure, x0: number, y0: number, x1: number, y1: number, fallback: string): string {
+  const { w, h, mask, canvas } = fig.src;
+  const X0 = Math.max(0, Math.floor(Math.min(x0, x1))), X1 = Math.min(w - 1, Math.ceil(Math.max(x0, x1)));
+  const Y0 = Math.max(0, Math.floor(Math.min(y0, y1))), Y1 = Math.min(h - 1, Math.ceil(Math.max(y0, y1)));
+  if (X1 <= X0 || Y1 <= Y0) return fallback;
+  const data = getPixels(canvas);
+  const buckets = new Map<number, { n: number; r: number; g: number; b: number; lum: number }>();
+  const inner = (x: number, y: number) => x > 1 && y > 1 && x < w - 2 && y < h - 2 && mask[y * w + x] && mask[y * w + x - 2] && mask[y * w + x + 2] && mask[(y - 2) * w + x] && mask[(y + 2) * w + x];
+  const step = Math.max(1, Math.floor(Math.sqrt(((X1 - X0) * (Y1 - Y0)) / 4000)));
+  for (let y = Y0; y <= Y1; y += step) for (let x = X0; x <= X1; x += step) {
+    if (!inner(x, y)) continue;
+    const k = (y * w + x) * 4;
+    const r = data[k], g = data[k + 1], b = data[k + 2];
+    const key = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4);
+    const e = buckets.get(key) ?? { n: 0, r: 0, g: 0, b: 0, lum: (r * 0.299 + g * 0.587 + b * 0.114) / 255 };
+    e.n++; e.r += r; e.g += g; e.b += b;
+    buckets.set(key, e);
+  }
+  const list = [...buckets.values()].sort((a, b) => b.n - a.n);
+  if (!list.length) return fallback;
+  let pick = list[0];
+  // いちばん多いのが線画の黒で、2番目もそれなりに多ければ2番目（塗りの色）を使う
+  if (pick.lum < 0.13 && list[1] && list[1].n > pick.n * 0.3) pick = list[1];
+  const hex = (v: number) => Math.round(v / pick.n).toString(16).padStart(2, '0');
+  return `#${hex(pick.r)}${hex(pick.g)}${hex(pick.b)}`;
+}
+
+const pixelCache = new WeakMap<HTMLCanvasElement, Uint8ClampedArray>();
+function getPixels(c: HTMLCanvasElement) {
+  let d = pixelCache.get(c);
+  if (!d) { d = c.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, c.width, c.height).data; pixelCache.set(c, d); }
+  return d;
+}
+
+export function analyzeColors(fig: Figure, p: CharParams): PartColors {
+  const g = figGeo(fig, p);
+  const { H, cx } = g;
+  const headTop = fig.top, headH = g.neckY - headTop;
+  const hw = g.headWpx / 2, tw = g.torsoWpx / 2;
+  const hair = dominant(fig, cx - hw, headTop, cx + hw, headTop + headH * 0.3, '#d8d8e0');
+  const skin = dominant(fig, cx - hw * 0.35, headTop + headH * 0.6, cx + hw * 0.35, headTop + headH * 0.9, '#f0d6c0');
+  const torso = dominant(fig, cx - tw * 0.8, g.neckY + (g.hipY - g.neckY) * 0.15, cx + tw * 0.8, g.neckY + (g.hipY - g.neckY) * 0.7, '#a08060');
+  const pelvis = dominant(fig, cx - tw * 0.8, g.hipY - H * 0.06, cx + tw * 0.8, g.hipY, torso);
+  let upperArm = torso, foreArm = torso, hand = skin;
+  const armLenPx = p.armLen * H, ath = Math.max(p.armThick * H * 0.35, 2);
+  if (p.armAngle > 45) { // Tポーズ：腕は体の横に水平
+    const s = cx + tw; // 右側（画面右）の腕を見る
+    upperArm = dominant(fig, s + armLenPx * 0.08, g.armRowY - ath, s + armLenPx * 0.42, g.armRowY + ath, torso);
+    foreArm = dominant(fig, s + armLenPx * 0.52, g.armRowY - ath, s + armLenPx * 0.85, g.armRowY + ath, upperArm);
+    hand = dominant(fig, s + armLenPx * 0.9, g.armRowY - ath * 1.4, s + armLenPx * 1.08, g.armRowY + ath * 1.4, skin);
+  } else { // 腕を下ろしている：胴体の外側の帯を見る
+    const ax = cx + tw + ath * 0.8;
+    const y0 = g.neckY + H * 0.03;
+    upperArm = dominant(fig, ax - ath, y0, ax + ath, y0 + armLenPx * 0.45, torso);
+    foreArm = dominant(fig, ax - ath, y0 + armLenPx * 0.5, ax + ath, y0 + armLenPx * 0.85, upperArm);
+    hand = dominant(fig, ax - ath * 1.3, y0 + armLenPx * 0.88, ax + ath * 1.3, y0 + armLenPx * 1.05, skin);
+  }
+  const legL = p.legLen * H, lx = cx + (p.legGap / 2) * H, lt = Math.max(p.legThick * H * 0.35, 2);
+  const thigh = dominant(fig, lx - lt, g.hipY + legL * 0.05, lx + lt, g.hipY + legL * 0.45, pelvis);
+  const shin = dominant(fig, lx - lt, g.hipY + legL * 0.5, lx + lt, g.hipY + legL * 0.85, thigh);
+  const foot = dominant(fig, cx - tw, fig.bottom - H * 0.035, cx + tw, fig.bottom, shin);
+  return { hair, skin, torso, pelvis, upperArm, foreArm, hand, thigh, shin, foot };
+}
+
+/**
+ * 顔だけのテクスチャ。頭の正面の部分（顔まわり）だけを切り出し、縁を肌色・髪色へなじませる。
+ * 頭の前面に貼る小さな曲面（face パーツ）だけに使い、頭全体や体には貼らない。
+ */
+export function makeFaceCanvas(fig: Figure, p: CharParams, colors: PartColors): HTMLCanvasElement {
+  const g = figGeo(fig, p);
+  const headH = g.neckY - fig.top;
+  const x0 = g.cx - g.headWpx * FACE_HALF_W, x1 = g.cx + g.headWpx * FACE_HALF_W;
+  const y0 = fig.top + headH * FACE_TOP, y1 = fig.top + headH * FACE_BOTTOM;
+  const S = 256;
+  const c = document.createElement('canvas');
+  c.width = S; c.height = S;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = colors.skin;
+  ctx.fillRect(0, 0, S, S);
+  ctx.drawImage(fig.src.canvas, x0, y0, x1 - x0, y1 - y0, 0, 0, S, S);
+  // 縁のなじませ：左右・下は肌色へ、上は髪色へ
+  const fade = (x: number, y: number, w: number, h: number, col: string, dir: 'l' | 'r' | 't' | 'b') => {
+    const grad = dir === 'l' ? ctx.createLinearGradient(x, 0, x + w, 0) : dir === 'r' ? ctx.createLinearGradient(x + w, 0, x, 0)
+      : dir === 't' ? ctx.createLinearGradient(0, y, 0, y + h) : ctx.createLinearGradient(0, y + h, 0, y);
+    grad.addColorStop(0, col); grad.addColorStop(1, col + '00');
+    ctx.fillStyle = grad; ctx.fillRect(x, y, w, h);
+  };
+  const f = S * 0.16;
+  fade(0, 0, f, S, colors.skin, 'l');
+  fade(S - f, 0, f, S, colors.skin, 'r');
+  fade(0, S - f, S, f, colors.skin, 'b');
+  fade(0, 0, S, f, colors.hair, 't');
+  return c;
+}
+// 顔パーツが覆う範囲（頭の幅・高さに対する割合）。face パーツの曲面の範囲と対応させている
+const FACE_HALF_W = 0.3, FACE_TOP = 0.15, FACE_BOTTOM = 0.9;
+
 // ------------------------------------------------------------------ 組み立て
-function capsuleBetween(a: THREE.Vector3, b: THREE.Vector3, r: number): THREE.BufferGeometry {
+export type Quality = 'low' | 'standard' | 'high';
+const SEG: Record<Quality, { sphere: [number, number]; cap: [number, number]; box: number }> = {
+  low: { sphere: [20, 14], cap: [4, 10], box: 2 },
+  standard: { sphere: [32, 22], cap: [6, 14], box: 4 },
+  high: { sphere: [48, 32], cap: [10, 20], box: 6 },
+};
+
+function capsuleBetween(a: THREE.Vector3, b: THREE.Vector3, r: number, q: Quality): THREE.BufferGeometry {
   const len = Math.max(a.distanceTo(b), 0.0001);
-  const g = new THREE.CapsuleGeometry(r, len, 6, 14);
-  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
-  g.applyQuaternion(q);
+  const g = new THREE.CapsuleGeometry(r, len, SEG[q].cap[0], SEG[q].cap[1]);
+  const rot = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+  g.applyQuaternion(rot);
   const m = a.clone().add(b).multiplyScalar(0.5);
   g.translate(m.x, m.y, m.z);
   return g;
 }
 
+export interface LookParams { metalness: number; roughness: number; opacity: number; wireframe: boolean }
+
 /**
  * 1体のキャラクター（Root Group 1個、子は名前付きのパーツ Mesh）を作る。
- * 座標は身長 1（足裏 y=0）。UV は元画像を正面から投影。
+ * 座標は身長 1（足裏 y=0）、正面 = +Z。各パーツは解析した色の単色マテリアル。
+ * テクスチャは face パーツ（頭の前面の曲面）だけ。
  */
-export function buildCharacter(p: CharParams, fig: Figure, material: THREE.Material): THREE.Group {
-  const parts: [string, THREE.BufferGeometry][] = [];
-  const add = (name: string, g: THREE.BufferGeometry) => parts.push([name, g]);
+export function buildCharacter(p: CharParams, colors: PartColors, face: HTMLCanvasElement | null, look: LookParams, quality: Quality = 'standard'): THREE.Group {
+  const q = quality, seg = SEG[q];
+  const mats = new Map<string, THREE.MeshStandardMaterial>();
+  const mat = (key: keyof PartColors) => {
+    let m = mats.get(key);
+    if (!m) {
+      m = new THREE.MeshStandardMaterial({ color: colors[key], metalness: look.metalness, roughness: look.roughness, wireframe: look.wireframe });
+      if (look.opacity < 0.999) { m.transparent = true; m.opacity = look.opacity; }
+      m.name = key;
+      mats.set(key, m);
+    }
+    return m;
+  };
+  const parts: [string, THREE.BufferGeometry, THREE.Material][] = [];
+  const add = (name: string, g: THREE.BufferGeometry, m: THREE.Material) => parts.push([name, g, m]);
 
   const legR = p.legThick / 2, armR = p.armThick / 2;
   const footH = Math.min(0.045, p.legLen * 0.12);
@@ -213,74 +353,80 @@ export function buildCharacter(p: CharParams, fig: Figure, material: THREE.Mater
   const neckTop = torsoTop + p.neckLen;
   const torsoD = p.torsoW * p.bodyDepth;
 
-  // 胴体（胸）と腰。腰は脚の付け根を覆う
-  // 胸と腰は大きく重ねて、くびれ（段差）が出ないようにする
+  // 胴体（胸）と腰。大きく重ねてくびれの段差を出さない
   const chestH = p.torsoLen * 0.7, waistH = p.torsoLen * 0.58;
-  const chest = new RoundedBoxGeometry(p.shoulderW, chestH, torsoD, 4, Math.min(torsoD, p.shoulderW, chestH) * 0.45);
+  const chest = new RoundedBoxGeometry(p.shoulderW, chestH, torsoD, seg.box, Math.min(torsoD, p.shoulderW, chestH) * 0.45);
   chest.translate(0, torsoTop - chestH / 2, 0);
-  add('torso', chest);
+  add('chest', chest, mat('torso'));
   const pelvisW = Math.max(p.torsoW, p.legGap + p.legThick, p.shoulderW * 0.92);
-  const pelvis = new RoundedBoxGeometry(pelvisW, waistH, torsoD * 0.97, 4, Math.min(torsoD, pelvisW, waistH) * 0.38);
+  const pelvis = new RoundedBoxGeometry(pelvisW, waistH, torsoD * 0.97, seg.box, Math.min(torsoD, pelvisW, waistH) * 0.38);
   pelvis.translate(0, hipY + waistH * 0.32, 0);
-  add('pelvis', pelvis);
+  add('hips', pelvis, mat('pelvis'));
 
-  // 首と頭
-  const neckR = Math.min(p.headW, p.torsoW) * 0.22;
-  add('neck', capsuleBetween(new THREE.Vector3(0, torsoTop - neckR, 0), new THREE.Vector3(0, neckTop + p.headH * 0.15, 0), neckR));
-  const head = new THREE.SphereGeometry(0.5, 32, 24);
-  head.scale(p.headW, p.headH, p.headW * p.headDepth);
-  head.translate(0, neckTop + p.headH / 2, 0);
-  add('head', head);
+  // 首・頭（肌）・髪（頭の上と後ろを覆う）・顔（頭の前面だけ）
+  const neckR = Math.min(p.headW, p.torsoW) * 0.2;
+  add('neck', capsuleBetween(new THREE.Vector3(0, torsoTop - neckR, 0), new THREE.Vector3(0, neckTop + p.headH * 0.15, 0), neckR, q), mat('skin'));
+  const hx = p.headW, hy = p.headH, hz = p.headW * p.headDepth;
+  const hc = new THREE.Vector3(0, neckTop + p.headH / 2, 0);
+  const head = new THREE.SphereGeometry(0.5, seg.sphere[0], seg.sphere[1]);
+  head.scale(hx, hy, hz); head.translate(hc.x, hc.y, hc.z);
+  add('head', head, mat('skin'));
+  // 髪：上から目の高さあたりまで、後ろは首まで（後ろ側だけ thetaLength を長くするため2枚）
+  const hairTop = new THREE.SphereGeometry(0.5, seg.sphere[0], Math.round(seg.sphere[1] * 0.6), 0, Math.PI * 2, 0, Math.PI * 0.42);
+  hairTop.scale(hx * 1.05, hy * 1.05, hz * 1.05); hairTop.translate(hc.x, hc.y, hc.z);
+  add('hair', hairTop, mat('hair'));
+  const hairBack = new THREE.SphereGeometry(0.5, Math.round(seg.sphere[0] / 2), Math.round(seg.sphere[1] * 0.5), Math.PI * 1.1, Math.PI * 0.8, Math.PI * 0.35, Math.PI * 0.45);
+  hairBack.scale(hx * 1.05, hy * 1.05, hz * 1.05); hairBack.translate(hc.x, hc.y, hc.z);
+  add('hair_back', hairBack, mat('hair'));
+  if (face) {
+    // +Z（正面）を中心にした曲面。範囲は makeFaceCanvas の切り出し範囲に対応
+    const phiHalf = Math.asin(Math.min(0.95, FACE_HALF_W * 2)), t0 = Math.acos(1 - FACE_TOP * 2), t1 = Math.acos(1 - FACE_BOTTOM * 2);
+    const fg = new THREE.SphereGeometry(0.5, Math.round(seg.sphere[0] * 0.6), Math.round(seg.sphere[1] * 0.6), Math.PI / 2 - phiHalf, phiHalf * 2, t0, t1 - t0);
+    fg.scale(hx * 1.065, hy * 1.065, hz * 1.065); fg.translate(hc.x, hc.y, hc.z);
+    const tex = new THREE.CanvasTexture(face);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const fm = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8, metalness: 0, wireframe: look.wireframe });
+    fm.name = 'face';
+    add('face', fg, fm);
+  }
 
-  // 腕（左右）。キャラの左 = 画面の右（+X）
-  for (const [side, label] of [[1, 'left'], [-1, 'right']] as const) {
+  // 腕（左右）。キャラの左 = 画面の右（+X）。Tポーズは真横
+  for (const [side, label] of [[1, 'L'], [-1, 'R']] as const) {
     const a = THREE.MathUtils.degToRad(p.armAngle);
     const dir = new THREE.Vector3(Math.sin(a) * side, -Math.cos(a), 0).normalize();
     const shoulder = new THREE.Vector3(side * (p.shoulderW / 2 - armR * 0.6), torsoTop - armR * 1.1, 0);
     const handR = armR * 1.25;
-    const upper = p.armLen * 0.46, fore = p.armLen * 0.42;
-    const elbow = shoulder.clone().addScaledVector(dir, upper);
-    const wrist = elbow.clone().addScaledVector(dir, fore);
-    add(`${label}_upper_arm`, capsuleBetween(shoulder, elbow, armR));
-    add(`${label}_forearm`, capsuleBetween(elbow, wrist, armR * 0.9));
-    const hand = new THREE.SphereGeometry(1, 16, 12);
+    const elbow = shoulder.clone().addScaledVector(dir, p.armLen * 0.46);
+    const wrist = elbow.clone().addScaledVector(dir, p.armLen * 0.42);
+    add(`upperArm_${label}`, capsuleBetween(shoulder, elbow, armR, q), mat('upperArm'));
+    add(`lowerArm_${label}`, capsuleBetween(elbow, wrist, armR * 0.9, q), mat('foreArm'));
+    const hand = new THREE.SphereGeometry(1, Math.round(seg.sphere[0] / 2), Math.round(seg.sphere[1] / 2));
     hand.scale(handR, handR * 1.15, handR * 0.8);
-    const hc = wrist.clone().addScaledVector(dir, handR * 0.9);
-    hand.translate(hc.x, hc.y, hc.z);
-    add(`${label}_hand`, hand);
+    const hp = wrist.clone().addScaledVector(dir, handR * 0.9);
+    hand.translate(hp.x, hp.y, hp.z);
+    add(`hand_${label}`, hand, mat('hand'));
   }
 
   // 脚（左右）
-  for (const [side, label] of [[1, 'left'], [-1, 'right']] as const) {
+  for (const [side, label] of [[1, 'L'], [-1, 'R']] as const) {
     const x = side * p.legGap / 2;
     const hipJ = new THREE.Vector3(x, hipY, 0);
     const ankle = new THREE.Vector3(x, footH + legR * 0.4, 0);
     const knee = hipJ.clone().lerp(ankle, 0.5);
-    add(`${label}_thigh`, capsuleBetween(hipJ, knee, legR));
-    add(`${label}_shin`, capsuleBetween(knee, ankle, legR * 0.88));
+    add(`upperLeg_${label}`, capsuleBetween(hipJ, knee, legR, q), mat('thigh'));
+    add(`lowerLeg_${label}`, capsuleBetween(knee, ankle, legR * 0.88, q), mat('shin'));
     const fw = p.legThick * 1.05, fl = p.legThick * 1.9;
-    const foot = new RoundedBoxGeometry(fw, footH * 2, fl, 3, Math.min(fw, footH * 2, fl) * 0.45);
+    const foot = new RoundedBoxGeometry(fw, footH * 2, fl, Math.max(2, seg.box - 1), Math.min(fw, footH * 2, fl) * 0.45);
     foot.translate(x, footH, fl * 0.22);
-    add(`${label}_foot`, foot);
+    add(`foot_${label}`, foot, mat('foot'));
   }
 
-  // UV：元画像を正面から投影（画像の1ピクセル = 身長 1/H）
-  const { w, h } = fig.src;
-  const H = fig.bottom - fig.top + 1;
   const root = new THREE.Group();
   root.name = 'character';
-  for (const [name, g] of parts) {
-    const geo = g.index ? g : g;
-    const pos = geo.attributes.position;
-    const uv = new Float32Array(pos.count * 2);
-    for (let i = 0; i < pos.count; i++) {
-      const px = pos.getX(i) * H + fig.cx, py = fig.bottom - pos.getY(i) * H;
-      uv[i * 2] = clamp((px + 0.5) / w, 0, 1);
-      uv[i * 2 + 1] = clamp(1 - (py + 0.5) / h, 0, 1);
-    }
-    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-    geo.computeVertexNormals();
-    const mesh = new THREE.Mesh(geo, material);
+  for (const [name, g, m] of parts) {
+    // UV は face 以外では使わない（GLB の互換性のため、各ジオメトリ標準の UV は残す）
+    g.computeVertexNormals(); // スムーズシェーディング
+    const mesh = new THREE.Mesh(g, m);
     mesh.name = name;
     root.add(mesh);
   }

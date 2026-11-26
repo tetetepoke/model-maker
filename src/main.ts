@@ -10,7 +10,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { KNOWN_ITEMS as ITEMS } from './items';
 import { buildGeometry, luminance, previewOutlines, type Lum } from './build';
-import { buildCharacter, estimate, isolateFigure, type CharParams, type Figure } from './character';
+import { analyzeColors, buildCharacter, COLOR_KEYS, estimate, isolateFigure, makeFaceCanvas, type CharParams, type Figure, type PartColors, type Quality } from './character';
 import { buildMask, loadImage, makeNormalMap, makeTexture, toCanvas, type SourceImage } from './mask';
 import { CATEGORIES, LOOKS, toId, type Category, type Mode } from './presets';
 
@@ -70,7 +70,15 @@ let current: THREE.Object3D | null = null;
 function setCurrent(obj: THREE.Object3D) {
   if (current) {
     pivot.remove(current);
-    current.traverse(o => { if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).geometry.dispose(); });
+    current.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      m.geometry.dispose();
+      // キャラクターのパーツ用マテリアル（共有の material 以外）も破棄
+      for (const mm of (Array.isArray(m.material) ? m.material : [m.material]) as THREE.MeshStandardMaterial[]) {
+        if (mm !== material) { mm.map?.dispose(); mm.dispose(); }
+      }
+    });
   }
   current = obj;
   pivot.add(obj);
@@ -114,6 +122,7 @@ document.querySelectorAll<HTMLButtonElement>('#views [data-view]').forEach(b => 
 $('#btnWire').onclick = () => {
   material.wireframe = !material.wireframe;
   $('#btnWire').classList.toggle('on', material.wireframe);
+  current?.traverse(o => { const m = o as THREE.Mesh; if (m.isMesh) (m.material as THREE.MeshStandardMaterial).wireframe = material.wireframe; });
 };
 
 // ------------------------------------------------------------------ STEP 1: 種類と画像
@@ -173,6 +182,7 @@ $('#file').addEventListener('change', async e => {
     remask();
     ['#secContour', '#secShape', '#secAdjust', '#secExport'].forEach(s => { $(s).hidden = false; });
     $('#bodyCard').hidden = state.mode !== 'humanoid';
+    $('#colorCard').hidden = state.mode !== 'humanoid';
     $('#empty').hidden = true;
   } catch (err) {
     toast('画像を読み込めませんでした: ' + (err as Error).message);
@@ -204,7 +214,7 @@ function remask(reestimate = true) {
       state.warnedPieces = true;
       toast('複数の絵があったので、全身が写っている1体だけを使いました。違う場合は「使う範囲」で囲んでください', true);
     }
-    if (reestimate) applyCharParams(estimate(state.fig));
+    if (reestimate) { const est = estimate(state.fig); applyCharParams(est); applyColors(analyzeColors(state.fig, est)); }
   } else {
     state.fig = null;
     state.src = src;
@@ -247,12 +257,13 @@ function makeTextures() {
   state.tex = new THREE.CanvasTexture(texCanvas);
   state.tex.colorSpace = THREE.SRGBColorSpace;
   state.tex.anisotropy = 4;
-  material.map = state.tex;
   if (state.mode === 'humanoid') {
-    // キャラクターは色を形にしない：法線マップ（凹凸）も使わない
+    // キャラクターは画像をテクスチャとして全面に貼らない（色はパーツごとのマテリアル、顔だけ face パーツ）
     state.normal = null; state.lum = null;
+    material.map = null;
     material.normalMap = null;
   } else {
+    material.map = state.tex;
     state.normal = new THREE.CanvasTexture(makeNormalMap(texCanvas));
     state.lum = luminance(texCanvas);
     material.normalMap = state.normal;
@@ -304,9 +315,11 @@ function setMode(m: Mode) {
   document.querySelectorAll<HTMLButtonElement>('#mode button').forEach(b => b.classList.toggle('on', b.dataset.v === m));
   const human = m === 'humanoid';
   $('#bodyCard').hidden = !human || !state.full;
+  $('#colorCard').hidden = !human || !state.full;
+  $('#tintRow').hidden = human;
   document.querySelectorAll<HTMLElement>('.item-only').forEach(el => { el.hidden = human; });
   $('#modeHint').textContent = human
-    ? '人体パーツ（頭・首・胴体・腕・脚）を組み立てて1体にします。画像は表面の色として貼ります。'
+    ? '画像解析＋プロシージャル生成（AIではありません）。シルエットから体型を、各部分から色を読み取り、頭・髪・顔・首・胴体・腰・腕・手・脚・足のパーツを1体に組み立てます。'
     : m === 'inflate' ? '輪郭の中央をふくらませて立体にします（石・鉱石・丸いアイテム向け）。' : '輪郭を押し出して面取りします（武器・道具・板状の物向け）。';
   if (!state.full) return;
   firstView = true;
@@ -325,7 +338,23 @@ function readCharParams(): CharParams {
   for (const k of BODY_IDS) p[k] = num('b_' + k);
   return p;
 }
-$('#btnReestimate').onclick = () => { if (state.fig) { applyCharParams(estimate(state.fig)); rebuild(true); toast('シルエットから推定し直しました', true); } };
+$('#btnReestimate').onclick = () => {
+  if (!state.fig) return;
+  const est = estimate(state.fig);
+  applyCharParams(est); applyColors(analyzeColors(state.fig, est));
+  rebuild(true); toast('シルエットから体型と色を推定し直しました', true);
+};
+
+// 色・服装：パーツごとの色（画像から自動で取り出し、あとから変更できる）
+function applyColors(c: PartColors) { for (const k of COLOR_KEYS) ($('#c_' + k) as HTMLInputElement).value = c[k]; }
+function readColors(): PartColors {
+  const c = {} as PartColors;
+  for (const k of COLOR_KEYS) c[k] = ($('#c_' + k) as HTMLInputElement).value;
+  return c;
+}
+COLOR_KEYS.forEach(k => $('#c_' + k).addEventListener('input', () => rebuild(true)));
+$('#useFace').addEventListener('change', () => rebuild(true));
+$('#quality').addEventListener('change', () => rebuild(true));
 
 let pending = 0, pendingGeo = false;
 function rebuild(geometry: boolean) {
@@ -343,7 +372,11 @@ function apply(geometry: boolean) {
   if (!state.src) return;
   if (geometry || !current) {
     if (state.mode === 'humanoid' && state.fig) {
-      setCurrent(buildCharacter(readCharParams(), state.fig, material));
+      const p = readCharParams(), colors = readColors();
+      const face = ($('#useFace') as HTMLInputElement).checked ? makeFaceCanvas(state.fig, p, colors) : null;
+      setCurrent(buildCharacter(p, colors, face, {
+        metalness: num('metalness'), roughness: num('roughness'), opacity: num('opacity'), wireframe: material.wireframe,
+      }, ($('#quality') as HTMLSelectElement).value as Quality));
     } else {
       const geo = buildGeometry(state.src, {
         mode: state.mode === 'extrude' ? 'extrude' : 'inflate', detail: num('detail'), thickness: num('thickness'),
@@ -363,6 +396,15 @@ function apply(geometry: boolean) {
   pivot.rotation.set(THREE.MathUtils.degToRad(num('rotX')), THREE.MathUtils.degToRad(num('rotY')), 0);
   pivot.position.y = num('posY') * h;
   material.color.set(($('#tint') as HTMLInputElement).value);
+  if (state.mode === 'humanoid' && current) {
+    current.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      const mm = m.material as THREE.MeshStandardMaterial;
+      if (mm.name === 'face') return;
+      mm.metalness = num('metalness'); mm.roughness = num('roughness');
+    });
+  }
   material.metalness = num('metalness');
   material.roughness = num('roughness');
   material.opacity = num('opacity');
@@ -440,9 +482,17 @@ function exportObject(): THREE.Object3D {
   pivot.updateMatrixWorld(true);
   const root = new THREE.Group();
   root.name = currentId();
-  const mat = material.clone();
-  mat.wireframe = false;
-  mat.name = currentId() + '_mat';
+  const clones = new Map<THREE.Material, THREE.Material>();
+  const cloneMat = (m: THREE.Material) => {
+    let c = clones.get(m);
+    if (!c) {
+      c = m.clone();
+      (c as THREE.MeshStandardMaterial).wireframe = false;
+      if (m === material) c.name = currentId() + '_mat';
+      clones.set(m, c);
+    }
+    return c;
+  };
   const meshes: THREE.Mesh[] = [];
   current!.traverse(o => {
     const m = o as THREE.Mesh;
@@ -450,7 +500,7 @@ function exportObject(): THREE.Object3D {
     const geo = m.geometry.clone();
     geo.applyMatrix4(m.matrixWorld);
     geo.computeVertexNormals();
-    const out = new THREE.Mesh(geo, mat);
+    const out = new THREE.Mesh(geo, cloneMat(m.material as THREE.Material));
     out.name = m.name;
     meshes.push(out);
   });

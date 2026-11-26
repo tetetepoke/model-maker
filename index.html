@@ -74,11 +74,32 @@
     <div class="ctrl"><span>脚の長さ</span><input type="range" id="b_legLen" min="0.12" max="0.65" step="0.005"><output></output></div>
     <div class="ctrl"><span>脚の太さ</span><input type="range" id="b_legThick" min="0.03" max="0.22" step="0.002"><output></output></div>
     <div class="ctrl"><span>脚の間隔</span><input type="range" id="b_legGap" min="0.03" max="0.4" step="0.005"><output></output></div>
+    <div class="ctrl"><span>品質</span>
+      <select id="quality"><option value="low">軽量</option><option value="standard" selected>標準</option><option value="high">高品質</option></select>
+    </div>
     <div class="row2"><button class="secondary" id="btnReestimate">シルエットから推定し直す</button></div>
   </section>
 
+  <section class="card" id="colorCard" hidden>
+    <h2><i>5</i>色・服装</h2>
+    <p class="note">画像の各部分から取り出した色です。タップで変更できます。</p>
+    <div class="colors">
+      <label><input type="color" id="c_hair">髪</label>
+      <label><input type="color" id="c_skin">肌</label>
+      <label><input type="color" id="c_torso">胴体</label>
+      <label><input type="color" id="c_pelvis">腰</label>
+      <label><input type="color" id="c_upperArm">上腕</label>
+      <label><input type="color" id="c_foreArm">前腕</label>
+      <label><input type="color" id="c_hand">手</label>
+      <label><input type="color" id="c_thigh">太もも</label>
+      <label><input type="color" id="c_shin">すね</label>
+      <label><input type="color" id="c_foot">足</label>
+    </div>
+    <label class="check"><input type="checkbox" id="useFace" checked> 顔を画像から貼る（頭の正面だけ）</label>
+  </section>
+
   <section class="card" id="secAdjust" hidden>
-    <h2><i>5</i>調整</h2>
+    <h2><i>6</i>質感・大きさ</h2>
     <div class="chips small" id="looks"></div>
     <div class="ctrl item-only"><span>厚み</span><input type="range" id="thickness" min="0.04" max="1.2" step="0.01"><output></output></div>
     <div class="ctrl item-only"><span>丸み</span><input type="range" id="roundness" min="0" max="1" step="0.01"><output></output></div>
@@ -91,7 +112,7 @@
       <div class="ctrl"><span>回転 Y</span><input type="range" id="rotY" min="-180" max="180" step="1" value="0"><output></output></div>
       <div class="ctrl"><span>傾き X</span><input type="range" id="rotX" min="-90" max="90" step="1" value="0"><output></output></div>
       <div class="ctrl"><span>位置 Y</span><input type="range" id="posY" min="-1" max="1" step="0.01" value="0"><output></output></div>
-      <div class="ctrl"><span>色</span><input type="color" id="tint" value="#ffffff"></div>
+      <div class="ctrl" id="tintRow"><span>色</span><input type="color" id="tint" value="#ffffff"></div>
       <div class="ctrl"><span>金属感</span><input type="range" id="metalness" min="0" max="1" step="0.01" value="0"><output></output></div>
       <div class="ctrl"><span>粗さ</span><input type="range" id="roughness" min="0" max="1" step="0.01" value="0.75"><output></output></div>
       <div class="ctrl"><span>不透明度</span><input type="range" id="opacity" min="0.2" max="1" step="0.01" value="1"><output></output></div>
@@ -99,7 +120,7 @@
   </section>
 
   <section class="card" id="secExport" hidden>
-    <h2><i>6</i>GLB 書き出し</h2>
+    <h2><i>7</i>GLB 書き出し</h2>
     <div class="ctrl"><span>アイテムID</span><input type="text" id="itemId" list="knownIds" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="iron_ore"></div>
     <datalist id="knownIds"></datalist>
     <div class="ctrl"><span>テクスチャ</span>
