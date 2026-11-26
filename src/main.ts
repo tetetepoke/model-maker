@@ -1,12 +1,18 @@
-// 3D MODEL MAKER（ELEMENT 3D Studio 内の単体アプリ。完全クライアントサイド。GPU生成AI・外部API不使用）
+// 3D MODEL MAKER（単体アプリ。完全クライアントサイド。GPU生成AI・外部API不使用）
 // 画像 → 輪郭 → 立体 → 調整 → 360°確認 → GLB
+//
+// 生成アルゴリズムは2系統に完全に分けている：
+//   キャラクター（人型）… character.ts：人体パーツを組み立て、画像はテクスチャとして貼る
+//   アイテム … build.ts：ふくらませる／押し出す
+// シーンに置く完成モデルの Root は常に1個（current）。作り直すたびに前のものは破棄する。
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { KNOWN_ITEMS as ITEMS } from './items';
-import { buildGeometry, luminance, previewOutlines, type Lum, type ShapeMode } from './build';
+import { buildGeometry, luminance, previewOutlines, type Lum } from './build';
+import { buildCharacter, estimate, isolateFigure, type CharParams, type Figure } from './character';
 import { buildMask, loadImage, makeNormalMap, makeTexture, toCanvas, type SourceImage } from './mask';
-import { CATEGORIES, LOOKS, toId, type Category } from './presets';
+import { CATEGORIES, LOOKS, toId, type Category, type Mode } from './presets';
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector(s) as T;
 const num = (id: string) => parseFloat(($('#' + id) as HTMLInputElement).value);
@@ -24,9 +30,10 @@ function showOut(el: HTMLInputElement) {
 
 const state = {
   cat: CATEGORIES[0] as Category,
-  mode: 'inflate' as ShapeMode,
+  mode: 'inflate' as Mode,
   full: null as HTMLCanvasElement | null,
-  src: null as SourceImage | null,
+  src: null as SourceImage | null, // アイテム用（切り抜き済みの画像とマスク）
+  fig: null as Figure | null, // キャラクター用（1体だけ取り出したもの）
   tex: null as THREE.CanvasTexture | null,
   normal: null as THREE.CanvasTexture | null,
   lum: null as Lum | null,
@@ -37,7 +44,7 @@ const state = {
 
 // ------------------------------------------------------------------ 3D プレビュー
 const stage = $('#stage');
-const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: false });
+const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -56,11 +63,18 @@ controls.enablePan = false; // 1本指＝回転、ピンチ＝ズーム
 controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_ROTATE };
 
 const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.75, metalness: 0 });
-const pivot = new THREE.Group(); // 回転・位置の調整用
-const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
-pivot.add(mesh);
+const pivot = new THREE.Group(); // 回転・位置の調整用（中身は current 1個だけ）
 scene.add(pivot);
-let wire: THREE.LineSegments | null = null;
+let current: THREE.Object3D | null = null;
+
+function setCurrent(obj: THREE.Object3D) {
+  if (current) {
+    pivot.remove(current);
+    current.traverse(o => { if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).geometry.dispose(); });
+  }
+  current = obj;
+  pivot.add(obj);
+}
 
 function resize() {
   const w = stage.clientWidth, h = stage.clientHeight;
@@ -73,29 +87,33 @@ resize();
 renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
 
 let viewR = 1;
-function setView(name: string) {
+function frameAt(dirv: THREE.Vector3) {
   const box = new THREE.Box3().setFromObject(pivot);
   if (box.isEmpty()) return;
   const c = box.getCenter(new THREE.Vector3());
   viewR = box.getSize(new THREE.Vector3()).length() * 0.5 || 1;
   const d = viewR / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.05;
-  const dir: Record<string, [number, number, number]> = {
-    front: [0, 0.12, 1], right: [1, 0.12, 0], back: [0, 0.12, -1], left: [-1, 0.12, 0], top: [0, 1, 0.0001], home: [0.6, 0.35, 1],
-  };
-  const v = new THREE.Vector3(...(dir[name] ?? dir.home)).normalize().multiplyScalar(d);
-  camera.position.copy(c).add(v);
+  camera.position.copy(c).add(dirv.normalize().multiplyScalar(d));
   camera.near = d / 100; camera.far = d * 50; camera.updateProjectionMatrix();
   controls.target.copy(c);
   controls.minDistance = viewR * 0.4; controls.maxDistance = d * 5;
   controls.update();
 }
+const VIEWS: Record<string, [number, number, number]> = {
+  front: [0, 0.12, 1], right: [1, 0.12, 0], back: [0, 0.12, -1], left: [-1, 0.12, 0], top: [0, 1, 0.0001], home: [0.6, 0.35, 1],
+};
+function setView(name: string) { frameAt(new THREE.Vector3(...(VIEWS[name] ?? VIEWS.home))); }
+/** 形が大きく変わったときだけ、カメラの向きを保ったまま距離を合わせる */
+function refit() {
+  const box = new THREE.Box3().setFromObject(pivot);
+  const r = box.getSize(new THREE.Vector3()).length() * 0.5 || 1;
+  const c = box.getCenter(new THREE.Vector3());
+  if (Math.abs(r - viewR) / viewR > 0.25 || controls.target.distanceTo(c) > r * 0.3) frameAt(camera.position.clone().sub(controls.target));
+}
 document.querySelectorAll<HTMLButtonElement>('#views [data-view]').forEach(b => { b.onclick = () => setView(b.dataset.view!); });
 $('#btnWire').onclick = () => {
-  if (wire) { pivot.remove(wire); wire.geometry.dispose(); wire = null; $('#btnWire').classList.remove('on'); return; }
-  wire = new THREE.LineSegments(new THREE.WireframeGeometry(mesh.geometry), new THREE.LineBasicMaterial({ color: 0x36e3c4, transparent: true, opacity: 0.35 }));
-  wire.scale.copy(mesh.scale); wire.position.copy(mesh.position);
-  pivot.add(wire);
-  $('#btnWire').classList.add('on');
+  material.wireframe = !material.wireframe;
+  $('#btnWire').classList.toggle('on', material.wireframe);
 };
 
 // ------------------------------------------------------------------ STEP 1: 種類と画像
@@ -110,12 +128,11 @@ function selectCategory(c: Category, applyDefaults: boolean) {
   state.cat = c;
   catBox.querySelectorAll('button').forEach((b, i) => b.classList.toggle('on', CATEGORIES[i] === c));
   if (applyDefaults) {
-    setMode(c.mode, false);
     setVal('thickness', c.thickness);
     setVal('roundness', c.roundness);
     setVal('detail', c.detail);
     if (!ITEMS[toId(($('#itemId') as HTMLInputElement).value)]) setVal('heightM', c.heightM);
-    rebuild(true);
+    setMode(c.mode);
   }
   updateExportInfo();
 }
@@ -128,9 +145,11 @@ LOOKS.forEach(l => {
     looksBox.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
     setVal('metalness', l.metalness); setVal('roughness', l.roughness); setVal('opacity', l.opacity);
     ($('#tint') as HTMLInputElement).value = l.tint;
-    if (l.roundness !== undefined) setVal('roundness', l.roundness);
-    if (l.bump !== undefined) setVal('bump', l.bump);
-    rebuild(false);
+    if (state.mode !== 'humanoid') {
+      if (l.roundness !== undefined) setVal('roundness', l.roundness);
+      if (l.bump !== undefined) setVal('bump', l.bump);
+    }
+    rebuild(state.mode !== 'humanoid');
   };
   looksBox.appendChild(b);
 });
@@ -146,12 +165,14 @@ $('#file').addEventListener('change', async e => {
     $('#drop').classList.add('has');
     $('#dropText').textContent = 'タップで画像を変更';
     const idInput = $('#itemId') as HTMLInputElement;
-    if (!idInput.value && state.fileBase && !/^img_\d+$|^image$/.test(state.fileBase)) idInput.value = state.fileBase;
+    if (!idInput.value && state.fileBase && !/^img_\d+$|^image$|^[0-9a-f_]{20,}$/.test(state.fileBase)) idInput.value = state.fileBase;
     state.crop = null; state.warnedPieces = false;
     $('#cropBox').hidden = false;
     drawCrop();
+    firstView = true;
     remask();
     ['#secContour', '#secShape', '#secAdjust', '#secExport'].forEach(s => { $(s).hidden = false; });
+    $('#bodyCard').hidden = state.mode !== 'humanoid';
     $('#empty').hidden = true;
   } catch (err) {
     toast('画像を読み込めませんでした: ' + (err as Error).message);
@@ -169,17 +190,29 @@ function workingCanvas(): HTMLCanvasElement | null {
   return out;
 }
 
-function remask() {
+/** 画像 → マスク。キャラクターならさらに「1体だけ」に絞り、体の比率を推定し直す */
+function remask(reestimate = true) {
   const work = workingCanvas();
   if (!work) return;
   const src = buildMask(work, { tolerance: num('tolerance'), alphaCut: 100 });
   if (!src) { toast('物体が見つかりません。範囲か背景の切り抜きを調整してください'); return; }
-  state.src = src;
-  if (src.pieces >= 4 && !state.warnedPieces) {
-    state.warnedPieces = true;
-    toast(`絵が${src.pieces}つに分かれています。設定画なら「使う範囲」で1体だけ囲んでください`);
+  $('#tolRow').hidden = src.hadAlpha;
+  if (state.mode === 'humanoid') {
+    state.fig = isolateFigure(src);
+    state.src = state.fig.src;
+    if (src.pieces >= 3 && !state.warnedPieces) {
+      state.warnedPieces = true;
+      toast('複数の絵があったので、全身が写っている1体だけを使いました。違う場合は「使う範囲」で囲んでください', true);
+    }
+    if (reestimate) applyCharParams(estimate(state.fig));
+  } else {
+    state.fig = null;
+    state.src = src;
+    if (src.pieces >= 4 && !state.warnedPieces) {
+      state.warnedPieces = true;
+      toast(`絵が${src.pieces}つに分かれています。設定画なら「使う範囲」で1つだけ囲んでください`);
+    }
   }
-  $('#tolRow').hidden = src.hadAlpha; // 透明PNGなら背景の切り抜きは不要
   makeTextures();
   drawContour();
   rebuild(true);
@@ -213,12 +246,17 @@ function makeTextures() {
   state.tex?.dispose(); state.normal?.dispose();
   state.tex = new THREE.CanvasTexture(texCanvas);
   state.tex.colorSpace = THREE.SRGBColorSpace;
-  state.tex.flipY = true;
   state.tex.anisotropy = 4;
-  state.normal = new THREE.CanvasTexture(makeNormalMap(texCanvas));
-  state.lum = luminance(texCanvas);
   material.map = state.tex;
-  material.normalMap = state.normal;
+  if (state.mode === 'humanoid') {
+    // キャラクターは色を形にしない：法線マップ（凹凸）も使わない
+    state.normal = null; state.lum = null;
+    material.normalMap = null;
+  } else {
+    state.normal = new THREE.CanvasTexture(makeNormalMap(texCanvas));
+    state.lum = luminance(texCanvas);
+    material.normalMap = state.normal;
+  }
   material.needsUpdate = true;
 }
 
@@ -258,13 +296,36 @@ cropCv.addEventListener('pointerup', () => {
 });
 $('#btnCropReset').onclick = () => { state.crop = null; drawCrop(); firstView = true; remask(); };
 
-// ------------------------------------------------------------------ STEP 3–4: 立体と調整
-document.querySelectorAll<HTMLButtonElement>('#mode button').forEach(b => { b.onclick = () => setMode(b.dataset.v as ShapeMode, true); });
-function setMode(m: ShapeMode, doRebuild: boolean) {
+// ------------------------------------------------------------------ STEP 3: 作り方
+document.querySelectorAll<HTMLButtonElement>('#mode button').forEach(b => { b.onclick = () => setMode(b.dataset.v as Mode); });
+function setMode(m: Mode) {
+  const changedKind = (m === 'humanoid') !== (state.mode === 'humanoid');
   state.mode = m;
   document.querySelectorAll<HTMLButtonElement>('#mode button').forEach(b => b.classList.toggle('on', b.dataset.v === m));
-  if (doRebuild) rebuild(true);
+  const human = m === 'humanoid';
+  $('#bodyCard').hidden = !human || !state.full;
+  document.querySelectorAll<HTMLElement>('.item-only').forEach(el => { el.hidden = human; });
+  $('#modeHint').textContent = human
+    ? '人体パーツ（頭・首・胴体・腕・脚）を組み立てて1体にします。画像は表面の色として貼ります。'
+    : m === 'inflate' ? '輪郭の中央をふくらませて立体にします（石・鉱石・丸いアイテム向け）。' : '輪郭を押し出して面取りします（武器・道具・板状の物向け）。';
+  if (!state.full) return;
+  firstView = true;
+  if (changedKind) remask(); else rebuild(true);
 }
+
+// ------------------------------------------------------------------ STEP 4: 調整
+const BODY_IDS: (keyof CharParams)[] = ['headW', 'headH', 'headDepth', 'shoulderW', 'torsoW', 'torsoLen', 'bodyDepth', 'armLen', 'armThick', 'armAngle', 'legLen', 'legThick', 'legGap'];
+let neckLen = 0.025;
+function applyCharParams(p: CharParams) {
+  neckLen = p.neckLen;
+  for (const k of BODY_IDS) setVal('b_' + k, +p[k].toFixed(3));
+}
+function readCharParams(): CharParams {
+  const p = { neckLen } as CharParams;
+  for (const k of BODY_IDS) p[k] = num('b_' + k);
+  return p;
+}
+$('#btnReestimate').onclick = () => { if (state.fig) { applyCharParams(estimate(state.fig)); rebuild(true); toast('シルエットから推定し直しました', true); } };
 
 let pending = 0, pendingGeo = false;
 function rebuild(geometry: boolean) {
@@ -279,20 +340,26 @@ function rebuild(geometry: boolean) {
 
 let firstView = true;
 function apply(geometry: boolean) {
-  const src = state.src; if (!src) return;
-  if (geometry) {
-    const geo = buildGeometry(src, {
-      mode: state.mode, detail: num('detail'), thickness: num('thickness'), roundness: num('roundness'),
-      bump: num('bump'), smoothing: num('smoothing'),
-    }, state.lum);
-    mesh.geometry.dispose();
-    mesh.geometry = geo;
-    if (wire) { $('#btnWire').click(); $('#btnWire').click(); }
+  if (!state.src) return;
+  if (geometry || !current) {
+    if (state.mode === 'humanoid' && state.fig) {
+      setCurrent(buildCharacter(readCharParams(), state.fig, material));
+    } else {
+      const geo = buildGeometry(state.src, {
+        mode: state.mode === 'extrude' ? 'extrude' : 'inflate', detail: num('detail'), thickness: num('thickness'),
+        roundness: num('roundness'), bump: num('bump'), smoothing: num('smoothing'),
+      }, state.lum);
+      const root = new THREE.Group();
+      root.name = 'item';
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.name = 'body';
+      root.add(mesh);
+      setCurrent(root);
+    }
   }
-  // 大きさ（高さ1のジオメトリを実寸へ）
+  // 大きさ（高さ1のモデルを実寸へ）
   const h = num('heightM');
-  mesh.scale.set(h * num('scaleX'), h, h * num('scaleZ'));
-  if (wire) wire.scale.copy(mesh.scale);
+  current!.scale.set(h * num('scaleX'), h, h * num('scaleZ'));
   pivot.rotation.set(THREE.MathUtils.degToRad(num('rotX')), THREE.MathUtils.degToRad(num('rotY')), 0);
   pivot.position.y = num('posY') * h;
   material.color.set(($('#tint') as HTMLInputElement).value);
@@ -304,39 +371,31 @@ function apply(geometry: boolean) {
   material.depthWrite = !transparent;
   material.normalScale.setScalar(num('bump') * 1.2);
   grid.scale.setScalar(Math.max(h, 0.2));
-  if (firstView) { setView('home'); firstView = false; } else if (geometry) setViewKeep();
+  if (firstView) { setView(state.mode === 'humanoid' ? 'front' : 'home'); firstView = false; } else if (geometry) refit();
   updateInfo();
 }
 
+function countTris(o: THREE.Object3D) {
+  let t = 0;
+  o.traverse(c => {
+    const m = c as THREE.Mesh;
+    if (m.isMesh) t += m.geometry.index ? m.geometry.index.count / 3 : m.geometry.attributes.position.count / 3;
+  });
+  return Math.round(t);
+}
+
 function updateInfo() {
-  const geo = mesh.geometry;
-  const tris = geo.index ? geo.index.count / 3 : geo.attributes.position.count / 3;
+  if (!current) return;
+  const tris = countTris(current);
   const size = new THREE.Box3().setFromObject(pivot).getSize(new THREE.Vector3());
-  $('#info').textContent = `${Math.round(tris).toLocaleString()} tris · ${size.x.toFixed(2)}×${size.y.toFixed(2)}×${size.z.toFixed(2)} m`;
-  const ready = $('#ready');
+  $('#info').textContent = `${tris.toLocaleString()} tris · ${size.x.toFixed(2)}×${size.y.toFixed(2)}×${size.z.toFixed(2)} m`;
   const issues: string[] = [];
-  if (tris > state.cat.maxTris) issues.push(`ポリゴンが多め（${Math.round(tris).toLocaleString()} / 目安 ${state.cat.maxTris.toLocaleString()}）→「細かさ」を下げる`);
+  if (tris > state.cat.maxTris) issues.push(`ポリゴンが多め（${tris.toLocaleString()} / 目安 ${state.cat.maxTris.toLocaleString()}）${state.mode === 'humanoid' ? '' : '→「細かさ」を下げる'}`);
   if (num('opacity') < 1) issues.push('半透明は重なり順で見え方が変わることがあります');
-  ready.innerHTML = issues.length ? issues.map(s => `<div class="warn">${s}</div>`).join('') : '<div class="ok">iPhone向けの目安内です</div>';
+  $('#ready').innerHTML = issues.length ? issues.map(s => `<div class="warn">${s}</div>`).join('') : '<div class="ok">iPhone向けの目安内です</div>';
 }
 
-// 形が大きく変わったときだけ、カメラの向きを保ったまま距離を合わせる
-function setViewKeep() {
-  const box = new THREE.Box3().setFromObject(pivot);
-  const c = box.getCenter(new THREE.Vector3());
-  const r = box.getSize(new THREE.Vector3()).length() * 0.5 || 1;
-  const dirv = camera.position.clone().sub(controls.target).normalize();
-  const d = r / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.05;
-  if (Math.abs(r - viewR) / viewR > 0.25 || controls.target.distanceTo(c) > r * 0.3) {
-    camera.position.copy(c).add(dirv.multiplyScalar(d));
-    controls.target.copy(c);
-    camera.near = d / 100; camera.far = d * 50; camera.updateProjectionMatrix();
-    controls.minDistance = r * 0.4; controls.maxDistance = d * 5;
-    viewR = r;
-  }
-}
-
-const geoInputs = ['thickness', 'roundness', 'bump', 'detail', 'smoothing'];
+const geoInputs = ['thickness', 'roundness', 'bump', 'detail', 'smoothing', ...BODY_IDS.map(k => 'b_' + k)];
 const lookInputs = ['heightM', 'scaleX', 'scaleZ', 'rotY', 'rotX', 'posY', 'metalness', 'roughness', 'opacity'];
 document.querySelectorAll<HTMLInputElement>('input[type=range]').forEach(el => {
   showOut(el);
@@ -351,7 +410,7 @@ document.querySelectorAll<HTMLInputElement>('input[type=range]').forEach(el => {
 $('#tint').addEventListener('input', () => rebuild(false));
 $('#texSize').addEventListener('change', () => { makeTextures(); rebuild(true); });
 let remaskTimer = 0;
-function remaskDebounced() { clearTimeout(remaskTimer); remaskTimer = window.setTimeout(remask, 180); }
+function remaskDebounced() { clearTimeout(remaskTimer); remaskTimer = window.setTimeout(() => remask(), 180); }
 
 // ------------------------------------------------------------------ STEP 6: GLB
 const known = $('#knownIds');
@@ -376,31 +435,40 @@ function updateExportInfo() {
   $('#snippet').textContent = `visual: { model: '/element118/${dir}${id}.glb' },`;
 }
 
-/** 調整を焼き込んだ書き出し用オブジェクト（底辺中心が原点、正面 +Z） */
+/** 書き出し用：調整（大きさ・回転・位置）を各パーツに焼き込み、Root Group 1個にまとめる。足元が y=0、正面 +Z */
 function exportObject(): THREE.Object3D {
   pivot.updateMatrixWorld(true);
-  const geo = mesh.geometry.clone();
-  geo.applyMatrix4(mesh.matrixWorld);
-  geo.computeVertexNormals();
-  const box = new THREE.Box3().setFromBufferAttribute(geo.attributes.position as THREE.BufferAttribute);
-  geo.translate(-(box.min.x + box.max.x) / 2, -box.min.y + num('posY') * num('heightM'), -(box.min.z + box.max.z) / 2);
-  const mat = material.clone();
-  mat.name = currentId() + '_mat';
-  const m = new THREE.Mesh(geo, mat);
-  m.name = currentId();
   const root = new THREE.Group();
   root.name = currentId();
-  root.add(m);
+  const mat = material.clone();
+  mat.wireframe = false;
+  mat.name = currentId() + '_mat';
+  const meshes: THREE.Mesh[] = [];
+  current!.traverse(o => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    const geo = m.geometry.clone();
+    geo.applyMatrix4(m.matrixWorld);
+    geo.computeVertexNormals();
+    const out = new THREE.Mesh(geo, mat);
+    out.name = m.name;
+    meshes.push(out);
+  });
+  const box = new THREE.Box3();
+  meshes.forEach(m => { m.geometry.computeBoundingBox(); box.union(m.geometry.boundingBox!); });
+  const dx = -(box.min.x + box.max.x) / 2, dy = -box.min.y + num('posY') * num('heightM'), dz = -(box.min.z + box.max.z) / 2;
+  meshes.forEach(m => { m.geometry.translate(dx, dy, dz); root.add(m); });
   return root;
 }
 
 $('#btnExport').onclick = async () => {
-  if (!state.src) return;
+  if (!current) return;
   const btn = $('#btnExport') as HTMLButtonElement;
   btn.disabled = true; btn.textContent = '書き出し中…';
   try {
     const obj = exportObject();
     const res = await new GLTFExporter().parseAsync(obj, { binary: true, onlyVisible: true, maxTextureSize: parseInt(($('#texSize') as HTMLSelectElement).value, 10) });
+    obj.traverse(o => { if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).geometry.dispose(); });
     const blob = new Blob([res as ArrayBuffer], { type: 'model/gltf-binary' });
     const name = `${currentId()}.glb`;
     await saveFile(blob, name);
@@ -429,12 +497,16 @@ $('#btnCopy').onclick = async () => {
   try { await navigator.clipboard.writeText($('#snippet').textContent || ''); toast('コピーしました', true); } catch { toast('コピーできませんでした'); }
 };
 
+let toastTimer = 0;
 function toast(msg: string, ok = false) {
   const t = $('#toast');
   t.textContent = msg; t.className = 'toast' + (ok ? ' ok' : ''); t.hidden = false;
-  clearTimeout((toast as unknown as { t: number }).t);
-  (toast as unknown as { t: number }).t = window.setTimeout(() => { t.hidden = true; }, 3500);
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => { t.hidden = true; }, 4500);
 }
+
+// デバッグ・確認用（シーン内の完成モデルの数を数える）
+(window as unknown as { __mm: unknown }).__mm = { rootCount: () => pivot.children.length, scene };
 
 // 初期状態
 selectCategory(CATEGORIES[0], true);

@@ -1,11 +1,11 @@
 // 種類ごとの初期値と、素材の質感プリセット。
 // ゲーム側の置き場所は既存の約束（public/assets/items/ ＋ materials.ts の visual.model）に合わせる。
-import type { ShapeMode } from './build';
+export type Mode = 'humanoid' | 'inflate' | 'extrude';
 
 export interface Category {
   id: string;
   label: string;
-  mode: ShapeMode;
+  mode: Mode; // キャラクター・人型モンスターは humanoid（アイテムとは別アルゴリズム）
   heightM: number; // 書き出し時の高さ（メートル）
   thickness: number;
   roundness: number;
@@ -20,8 +20,8 @@ export const CATEGORIES: Category[] = [
   { id: 'element', label: '元素', mode: 'inflate', heightM: 0.3, thickness: 0.6, roundness: 0.9, dir: 'assets/items/', maxTris: 5000, detail: 44 },
   { id: 'tool', label: '武器・道具', mode: 'extrude', heightM: 0.8, thickness: 0.08, roundness: 0.35, dir: 'assets/items/', maxTris: 4000, detail: 60 },
   { id: 'nature', label: '木・岩・植物', mode: 'inflate', heightM: 1.5, thickness: 0.6, roundness: 0.8, dir: 'assets/models/', maxTris: 8000, detail: 56 },
-  { id: 'character', label: 'キャラクター', mode: 'inflate', heightM: 1.4, thickness: 0.35, roundness: 0.9, dir: 'assets/models/', maxTris: 15000, detail: 80 },
-  { id: 'monster', label: 'モンスター', mode: 'inflate', heightM: 1.2, thickness: 0.45, roundness: 0.9, dir: 'assets/models/', maxTris: 12000, detail: 72 },
+  { id: 'character', label: 'キャラクター', mode: 'humanoid', heightM: 1.4, thickness: 0.35, roundness: 0.9, dir: 'assets/models/', maxTris: 15000, detail: 80 },
+  { id: 'monster', label: 'モンスター', mode: 'humanoid', heightM: 1.2, thickness: 0.45, roundness: 0.9, dir: 'assets/models/', maxTris: 12000, detail: 72 },
   { id: 'building', label: '建物・設備', mode: 'extrude', heightM: 3.0, thickness: 0.6, roundness: 0.1, dir: 'assets/models/', maxTris: 15000, detail: 72 },
 ];
 

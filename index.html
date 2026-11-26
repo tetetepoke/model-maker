@@ -50,18 +50,39 @@
   <section class="card" id="secShape" hidden>
     <h2><i>3</i>立体の作り方</h2>
     <div class="seg" id="mode">
-      <button data-v="inflate">ふくらませる<small>石・鉱石・キャラ</small></button>
+      <button data-v="humanoid">人型<small>キャラ・人型モンスター</small></button>
+      <button data-v="inflate">ふくらませる<small>石・鉱石・丸い物</small></button>
       <button data-v="extrude">押し出す<small>武器・道具・板状</small></button>
     </div>
-    <div class="ctrl"><span>細かさ</span><input type="range" id="detail" min="32" max="140" step="4" value="72"><output></output></div>
+    <p class="note" id="modeHint"></p>
+    <div class="ctrl item-only"><span>細かさ</span><input type="range" id="detail" min="32" max="140" step="4" value="72"><output></output></div>
+  </section>
+
+  <section class="card" id="bodyCard" hidden>
+    <h2><i>4</i>体の形</h2>
+    <p class="note">シルエットから推定した値です。指で動かすと3Dがすぐ変わります。</p>
+    <div class="ctrl"><span>頭の幅</span><input type="range" id="b_headW" min="0.08" max="0.6" step="0.005"><output></output></div>
+    <div class="ctrl"><span>頭の高さ</span><input type="range" id="b_headH" min="0.08" max="0.5" step="0.005"><output></output></div>
+    <div class="ctrl"><span>頭の奥行き</span><input type="range" id="b_headDepth" min="0.5" max="1.3" step="0.01"><output></output></div>
+    <div class="ctrl"><span>肩幅</span><input type="range" id="b_shoulderW" min="0.1" max="0.6" step="0.005"><output></output></div>
+    <div class="ctrl"><span>胴体の幅</span><input type="range" id="b_torsoW" min="0.08" max="0.55" step="0.005"><output></output></div>
+    <div class="ctrl"><span>胴体の長さ</span><input type="range" id="b_torsoLen" min="0.1" max="0.6" step="0.005"><output></output></div>
+    <div class="ctrl"><span>胴体の奥行き</span><input type="range" id="b_bodyDepth" min="0.3" max="1.1" step="0.01"><output></output></div>
+    <div class="ctrl"><span>腕の長さ</span><input type="range" id="b_armLen" min="0.1" max="0.7" step="0.005"><output></output></div>
+    <div class="ctrl"><span>腕の太さ</span><input type="range" id="b_armThick" min="0.02" max="0.2" step="0.002"><output></output></div>
+    <div class="ctrl"><span>腕の角度</span><input type="range" id="b_armAngle" min="0" max="95" step="1"><output></output></div>
+    <div class="ctrl"><span>脚の長さ</span><input type="range" id="b_legLen" min="0.12" max="0.65" step="0.005"><output></output></div>
+    <div class="ctrl"><span>脚の太さ</span><input type="range" id="b_legThick" min="0.03" max="0.22" step="0.002"><output></output></div>
+    <div class="ctrl"><span>脚の間隔</span><input type="range" id="b_legGap" min="0.03" max="0.4" step="0.005"><output></output></div>
+    <div class="row2"><button class="secondary" id="btnReestimate">シルエットから推定し直す</button></div>
   </section>
 
   <section class="card" id="secAdjust" hidden>
-    <h2><i>4</i>調整</h2>
+    <h2><i>5</i>調整</h2>
     <div class="chips small" id="looks"></div>
-    <div class="ctrl"><span>厚み</span><input type="range" id="thickness" min="0.04" max="1.2" step="0.01"><output></output></div>
-    <div class="ctrl"><span>丸み</span><input type="range" id="roundness" min="0" max="1" step="0.01"><output></output></div>
-    <div class="ctrl"><span>凹凸</span><input type="range" id="bump" min="0" max="1" step="0.01" value="0.3"><output></output></div>
+    <div class="ctrl item-only"><span>厚み</span><input type="range" id="thickness" min="0.04" max="1.2" step="0.01"><output></output></div>
+    <div class="ctrl item-only"><span>丸み</span><input type="range" id="roundness" min="0" max="1" step="0.01"><output></output></div>
+    <div class="ctrl item-only"><span>凹凸</span><input type="range" id="bump" min="0" max="1" step="0.01" value="0.3"><output></output></div>
     <details>
       <summary>大きさ・回転・色</summary>
       <div class="ctrl"><span>高さ (m)</span><input type="range" id="heightM" min="0.05" max="5" step="0.01"><output></output></div>
