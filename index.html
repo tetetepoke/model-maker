@@ -32,7 +32,12 @@
       <img id="srcPreview" alt="">
       <span id="dropText">正面の画像を選ぶ（透明PNG推奨）</span>
     </label>
-    <p class="note">三面図（側面・背面）は次のステップで対応予定。いまは正面1枚から作ります。</p>
+    <div id="cropBox" hidden>
+      <p class="sub">使う範囲を指でなぞって囲む（設定画から1体・1個だけ選ぶ）</p>
+      <canvas id="cropCanvas"></canvas>
+      <div class="row2"><button class="secondary" id="btnCropReset">範囲を解除（画像全体）</button></div>
+    </div>
+    <p class="note">1枚の画像に1つの物だけが写っている状態で作ります。設定画のように複数の絵がある場合は、上で範囲を囲んでください。三面図は次のステップで対応予定。</p>
   </section>
 
   <section class="card" id="secContour" hidden>

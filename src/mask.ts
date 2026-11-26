@@ -5,6 +5,7 @@ export interface SourceImage {
   w: number;
   h: number;
   hadAlpha: boolean;
+  pieces: number; // 残った島の数（多い＝設定画に複数の絵がある可能性）
 }
 
 export interface MaskOptions {
@@ -64,7 +65,7 @@ export function buildMask(full: HTMLCanvasElement, opt: MaskOptions): SourceImag
     // 外周とつながった背景だけを背景にする（物体の中の白い部分を消さない）
     floodBackground(m, W, H);
   }
-  removeSpecks(m, W, H);
+  const pieces = removeSpecks(m, W, H);
 
   // 物体の範囲で切り抜き
   let x0 = W, y0 = H, x1 = -1, y1 = -1;
@@ -81,7 +82,7 @@ export function buildMask(full: HTMLCanvasElement, opt: MaskOptions): SourceImag
   canvas.getContext('2d')!.drawImage(full, x0, y0, w, h, 0, 0, w, h);
   const mask = new Uint8Array(w * h);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) mask[y * w + x] = m[(y + y0) * W + x + x0];
-  return { canvas, mask, w, h, hadAlpha };
+  return { canvas, mask, w, h, hadAlpha, pieces };
 }
 
 /** m: 1=前景候補。外周から連結した 0 だけを背景として残し、閉じた穴の中の 0 は前景にする */
@@ -100,8 +101,8 @@ function floodBackground(m: Uint8Array, W: number, H: number) {
   for (let i = 0; i < m.length; i++) m[i] = bg[i] ? 0 : 1;
 }
 
-/** 小さなゴミ（全体の 0.2% 未満の島）を消す */
-function removeSpecks(m: Uint8Array, W: number, H: number) {
+/** 小さなゴミ（全体の 0.2% 未満の島）を消し、目立つ島（最大の島の 5% 以上）の数を返す */
+function removeSpecks(m: Uint8Array, W: number, H: number): number {
   const label = new Int32Array(W * H).fill(-1);
   const sizes: number[] = [];
   const stack: number[] = [];
@@ -122,6 +123,8 @@ function removeSpecks(m: Uint8Array, W: number, H: number) {
   const total = sizes.reduce((a, b) => a + b, 0);
   const keep = sizes.map(s => s >= total * 0.002);
   for (let i = 0; i < m.length; i++) if (m[i] && !keep[label[i]]) m[i] = 0;
+  const biggest = Math.max(0, ...sizes);
+  return sizes.filter(s => s >= biggest * 0.05).length;
 }
 
 /** 低解像度グリッドへ縮小（各セルの過半数が前景なら 1） */

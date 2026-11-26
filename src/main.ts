@@ -31,6 +31,8 @@ const state = {
   normal: null as THREE.CanvasTexture | null,
   lum: null as Lum | null,
   fileBase: '',
+  crop: null as { x: number; y: number; w: number; h: number } | null,
+  warnedPieces: false,
 };
 
 // ------------------------------------------------------------------ 3D プレビュー
@@ -145,6 +147,9 @@ $('#file').addEventListener('change', async e => {
     $('#dropText').textContent = 'タップで画像を変更';
     const idInput = $('#itemId') as HTMLInputElement;
     if (!idInput.value && state.fileBase && !/^img_\d+$|^image$/.test(state.fileBase)) idInput.value = state.fileBase;
+    state.crop = null; state.warnedPieces = false;
+    $('#cropBox').hidden = false;
+    drawCrop();
     remask();
     ['#secContour', '#secShape', '#secAdjust', '#secExport'].forEach(s => { $(s).hidden = false; });
     $('#empty').hidden = true;
@@ -154,11 +159,26 @@ $('#file').addEventListener('change', async e => {
 });
 
 // ------------------------------------------------------------------ STEP 2: 輪郭
+function workingCanvas(): HTMLCanvasElement | null {
+  const full = state.full; if (!full) return null;
+  const c = state.crop;
+  if (!c || c.w < 8 || c.h < 8) return full;
+  const out = document.createElement('canvas');
+  out.width = Math.round(c.w); out.height = Math.round(c.h);
+  out.getContext('2d')!.drawImage(full, c.x, c.y, c.w, c.h, 0, 0, out.width, out.height);
+  return out;
+}
+
 function remask() {
-  if (!state.full) return;
-  const src = buildMask(state.full, { tolerance: num('tolerance'), alphaCut: 100 });
-  if (!src) { toast('物体が見つかりません。背景の切り抜きを調整してください'); return; }
+  const work = workingCanvas();
+  if (!work) return;
+  const src = buildMask(work, { tolerance: num('tolerance'), alphaCut: 100 });
+  if (!src) { toast('物体が見つかりません。範囲か背景の切り抜きを調整してください'); return; }
   state.src = src;
+  if (src.pieces >= 4 && !state.warnedPieces) {
+    state.warnedPieces = true;
+    toast(`絵が${src.pieces}つに分かれています。設定画なら「使う範囲」で1体だけ囲んでください`);
+  }
   $('#tolRow').hidden = src.hadAlpha; // 透明PNGなら背景の切り抜きは不要
   makeTextures();
   drawContour();
@@ -201,6 +221,42 @@ function makeTextures() {
   material.normalMap = state.normal;
   material.needsUpdate = true;
 }
+
+// ------------------------------------------------------------------ 範囲選択（設定画から1つだけ使う）
+const cropCv = $('#cropCanvas') as HTMLCanvasElement;
+let cropScale = 1;
+function drawCrop(drag?: { x0: number; y0: number; x1: number; y1: number }) {
+  const full = state.full; if (!full) return;
+  cropScale = Math.min(1, 900 / full.width);
+  cropCv.width = Math.round(full.width * cropScale); cropCv.height = Math.round(full.height * cropScale);
+  const ctx = cropCv.getContext('2d')!;
+  ctx.drawImage(full, 0, 0, cropCv.width, cropCv.height);
+  const r = drag
+    ? { x: Math.min(drag.x0, drag.x1), y: Math.min(drag.y0, drag.y1), w: Math.abs(drag.x1 - drag.x0), h: Math.abs(drag.y1 - drag.y0) }
+    : state.crop && { x: state.crop.x * cropScale, y: state.crop.y * cropScale, w: state.crop.w * cropScale, h: state.crop.h * cropScale };
+  if (!r) return;
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.beginPath(); ctx.rect(0, 0, cropCv.width, cropCv.height); ctx.rect(r.x, r.y, r.w, r.h); ctx.fill('evenodd');
+  ctx.strokeStyle = '#36e3c4'; ctx.lineWidth = 3; ctx.strokeRect(r.x, r.y, r.w, r.h);
+}
+function cvPoint(e: PointerEvent) {
+  const b = cropCv.getBoundingClientRect();
+  return { x: Math.min(Math.max(e.clientX - b.left, 0), b.width) * (cropCv.width / b.width), y: Math.min(Math.max(e.clientY - b.top, 0), b.height) * (cropCv.height / b.height) };
+}
+let dragRect: { x0: number; y0: number; x1: number; y1: number } | null = null;
+cropCv.addEventListener('pointerdown', e => { const p = cvPoint(e); dragRect = { x0: p.x, y0: p.y, x1: p.x, y1: p.y }; cropCv.setPointerCapture(e.pointerId); e.preventDefault(); });
+cropCv.addEventListener('pointermove', e => { if (!dragRect) return; const p = cvPoint(e); dragRect.x1 = p.x; dragRect.y1 = p.y; drawCrop(dragRect); });
+cropCv.addEventListener('pointerup', () => {
+  if (!dragRect) return;
+  const r = dragRect; dragRect = null;
+  const w = Math.abs(r.x1 - r.x0) / cropScale, h = Math.abs(r.y1 - r.y0) / cropScale;
+  if (w < 12 || h < 12) { drawCrop(); return; } // ただのタップは無視
+  state.crop = { x: Math.min(r.x0, r.x1) / cropScale, y: Math.min(r.y0, r.y1) / cropScale, w, h };
+  drawCrop();
+  firstView = true;
+  remask();
+});
+$('#btnCropReset').onclick = () => { state.crop = null; drawCrop(); firstView = true; remask(); };
 
 // ------------------------------------------------------------------ STEP 3–4: 立体と調整
 document.querySelectorAll<HTMLButtonElement>('#mode button').forEach(b => { b.onclick = () => setMode(b.dataset.v as ShapeMode, true); });
