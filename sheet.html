@@ -7,6 +7,7 @@
 <meta name="theme-color" content="#0a0d12">
 <title>ELEMENT 118 SHEET → 3D</title>
 <link rel="stylesheet" href="./style.css">
+<link rel="stylesheet" href="./fit.css">
 </head>
 <body>
 <header class="top">
@@ -93,9 +94,36 @@
     <div class="iouTable" id="iouTable"></div>
     <button class="secondary wide" id="btnHullGlb" hidden>Visual Hull を GLB で保存（確認用）</button>
   </section>
+  <section class="card" id="secFit" hidden>
+    <h2><i>5</i>Base Mesh フィッティング（Phase 3）</h2>
+    <p class="note">Standard Base Mesh V1 を自動で読み込み、SHEET 2 の17関節と Visual Hull に合わせて「頂点の位置」だけを動かします。頂点数・頂点番号・面・UV・ボーン構造は V1 のままです。Visual Hull は目標形状（体の外側の上限）としてだけ使い、髪・帽子・リュックなどは体に含めません。</p>
+    <button class="primary" id="btnFit">Base Mesh V1 をフィット</button>
+    <p class="note" id="fitHint"></p>
+    <div id="fitBox" hidden>
+      <div class="fitViews" id="fitViews">
+        <button data-v="front">FRONT</button><button data-v="right">RIGHT</button><button data-v="back">BACK</button><button data-v="left">LEFT</button><button data-v="top">TOP</button><button data-v="free">FREE</button>
+      </div>
+      <div class="fitToggles">
+        <label><input type="checkbox" id="fOrig" checked>Original Sheets</label>
+        <label><input type="checkbox" id="fHull">Visual Hull</label>
+        <label><input type="checkbox" id="fFit" checked>Fitted Mesh</label>
+        <label><input type="checkbox" id="fOverlay">Overlay</label>
+        <label><input type="checkbox" id="fWire">Wireframe</label>
+        <label><input type="checkbox" id="fSkel" checked>Skeleton</label>
+      </div>
+      <p class="note">結果は上の3D画面に出ます。Original Sheets は FRONT〜TOP の時だけ元の絵を重ねます。Overlay は Visual Hull を青い半透明で重ねます。指で回すと自由視点（FREE）です。</p>
+      <div class="ctrl"><span>段階</span><select id="fitStageSel"></select></div>
+      <div class="iouTable" id="fitIou"></div>
+      <table class="fitStat" id="fitChecks"></table>
+      <button class="secondary wide" id="btnFitGlb">Fitted Mesh を GLB で書き出して検証</button>
+      <table class="fitStat" id="fitGlbCheck" hidden></table>
+      <button class="secondary wide" id="btnFitSave" hidden>e118_fitted_body.glb を保存</button>
+    </div>
+  </section>
 </main>
 
 <div class="toast" id="toast" hidden></div>
 <script type="module" src="./sheet.js"></script>
+<script type="module" src="./fit.js"></script>
 </body>
 </html>

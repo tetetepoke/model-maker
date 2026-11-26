@@ -26,7 +26,8 @@ Element 118 Sheet V1 規格（`docs/SHEET_SPEC_V1.md`）の2枚の設計シー�
 4. 3D生成：5方向シルエットから Visual Hull（形状測定用）。FRONT〜TOP のボタンで正投影に切り替え、元シルエットを半透明で重ねて一致度（IoU）を表示
 
 実装済み：Phase 1（規格・読み込み・解析）、Phase 2（Visual Hull・重ね合わせ比較）、Standard Base Mesh V1（下記）
-次：Phase 3 Visual Hull fitting（Base Mesh V1 の頂点位置だけを動かす）→ テクスチャ・GLB
+実装済み：Phase 3 Visual Hull → Base Mesh V1 フィッティング（sheet.html の 5、仕様 `docs/PHASE3_FIT_V1.md`）
+次：外見（SHEET 1 の色・顔・服・髪・装備）→ Rig / Motion → ゲーム用 GLB
 すべてブラウザ内の画像解析＋幾何計算（AI・外部API・GPUサーバー不使用）。`sample.html` はサンプルシート生成用の開発ページ。
 
 ## Element 118 Standard Base Mesh V1（base.html）

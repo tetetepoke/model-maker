@@ -1,0 +1,10 @@
+/* ---- Phase 3：Base Mesh フィッティング（sheet.html の追加部分だけに効く） ---- */
+#secFit .fitViews { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; margin: 12px 0 8px; }
+#secFit .fitViews button { padding: 8px 0; border-radius: 9px; border: 1px solid var(--line); background: #0d1218; font-size: 11px; font-weight: 700; cursor: pointer; }
+#secFit .fitToggles { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; margin: 4px 0; }
+#secFit .fitToggles label { display: flex; align-items: center; gap: 5px; }
+#secFit table.fitStat { width: 100%; border-collapse: collapse; font-size: 12px; margin: 10px 0; }
+#secFit table.fitStat th, #secFit table.fitStat td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+#secFit table.fitStat th { color: var(--dim); font-weight: 500; width: 38%; }
+#secFit .ok { color: var(--acc); }
+#secFit .ng { color: #ff6b6b; }
