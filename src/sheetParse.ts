@@ -317,6 +317,16 @@ function findMarkerBlobs(src: SourceImage, all?: MBlob[]): MBlob[] {
   const d = canvas.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, w, h).data;
   const lab = new Int8Array(w * h).fill(-1);
   for (let i = 0; i < w * h; i++) if (d[i * 4 + 3] >= 120) lab[i] = classifyMarker(d[i * 4], d[i * 4 + 1], d[i * 4 + 2]);
+  // 骨格線などの細い線（マーカーと同じ色でも）を色ごとのオープニングで取り除く。円（直径＝身長の3%）は残る
+  const lr = Math.max(1, Math.round(MARKER_DIAMETER * h * 0.18));
+  for (let k = 0; k < MARKERS.length; k++) {
+    let any = false;
+    const bin = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) if (lab[i] === k) { bin[i] = 1; any = true; }
+    if (!any) continue;
+    const op = morph(morph(bin, w, h, lr, false), w, h, lr, true);
+    for (let i = 0; i < w * h; i++) if (bin[i] && !op[i]) lab[i] = -1;
+  }
   const seen = new Uint8Array(w * h);
   const out: MBlob[] = [];
   const st: number[] = [];
