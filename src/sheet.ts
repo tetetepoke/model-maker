@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { buildHull, type HullResult } from './hull';
 import { loadImage, type SourceImage } from './mask';
-import { denorm, fillMissingJoints, parseSheet1, parseSheet2, type DebugItem, type DebugMarker, type Joints, type PartId, type Sheet1, type Sheet2, type ViewId } from './sheetParse';
+import { denorm, fillMissingJoints, parseSheet1, parseSheet2, RIGHT_MARKER_KEYS, SHEET2_ROI, type DebugItem, type DebugMarker, type Joints, type PartId, type Sheet1, type Sheet2, type ViewId } from './sheetParse';
 import { ALL_JOINTS, BONES, MARKERS, markerOf, PART_IDS_ALL, rgbHex, SHEET1_CELLS, type JointId } from './sheetSpec';
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector(s) as T;
@@ -15,6 +15,8 @@ const VIEW_LABEL: Record<ViewId, string> = { front: 'FRONT', right: 'RIGHT', bac
 const state = {
   img1: null as HTMLCanvasElement | null,
   img2: null as HTMLCanvasElement | null,
+  src1: '', src2: '', // 入力画像の識別（ファイル名・サイズ）
+  sameInput: false,
   s1: null as Sheet1 | null,
   s2: null as Sheet2 | null,
   joints: null as Joints | null,
@@ -170,7 +172,10 @@ async function fileToCanvas(f: Blob): Promise<HTMLCanvasElement> {
 }
 async function setSheet(n: 1 | 2, blob: Blob) {
   const c = await fileToCanvas(blob);
-  if (n === 1) state.img1 = c; else state.img2 = c;
+  const name = (blob as File).name || (n === 1 ? 'sample_sheet1.png' : 'sample_sheet2.png');
+  c.dataset.source = `SHEET ${n}`;
+  if (n === 1) { state.img1 = c; state.src1 = `${name}（${c.width}×${c.height}）`; }
+  else { state.img2 = c; state.src2 = `${name}（${c.width}×${c.height}）`; }
   ($('#prev' + n) as HTMLImageElement).src = URL.createObjectURL(blob);
   $('#drop' + n).classList.add('has');
   ($('#btnAnalyze') as HTMLButtonElement).disabled = !state.img1;
@@ -193,8 +198,12 @@ $('#btnSample').onclick = async () => {
 $('#btnAnalyze').onclick = analyze;
 function analyze() {
   if (!state.img1) return;
-  state.s1 = parseSheet1(state.img1);
-  state.s2 = state.img2 ? parseSheet2(state.img2) : null;
+  // 入力の取り違え防止：それぞれの解析には、それぞれの入力画像だけを渡す
+  const in1 = state.img1, in2 = state.img2;
+  state.sameInput = !!in2 && (in1 === in2 || fingerprint(in1) === fingerprint(in2));
+  console.info('[sheet] SHEET1 source =', in1.dataset.source, state.src1, '/ SHEET2 source =', in2?.dataset.source, state.src2);
+  state.s1 = parseSheet1(in1, 'SHEET 1');
+  state.s2 = in2 ? parseSheet2(in2, 'SHEET 2') : null;
   // 関節の入力元は SHEET 2 だけ（SHEET 1 からは探さない）
   state.detected = state.s2 ? fillMissingJoints(state.s2.joints, state.s2.front?.src) : null;
   state.joints = state.detected ? structuredClone(state.detected) : null;
@@ -220,7 +229,7 @@ document.querySelectorAll<HTMLButtonElement>('#previewMode button').forEach(b =>
  *   緑系 = 採用（FRONT など）／赤 = 不採用（理由つき）／赤の点線 = 見つからなかったビュー（規格上の位置）
  *   ○ = 検出したマーカー（緑=採用・赤=不採用）／✕ = マーカーが見つからなかった関節（推定位置）
  */
-function drawDebug(cv: HTMLCanvasElement, list: HTMLElement, sheet: HTMLCanvasElement | null, debug: DebugItem[], markers: DebugMarker[], missingViews: string[], missingJoints: { id: string; x: number; y: number }[]) {
+function drawDebug(cv: HTMLCanvasElement, list: HTMLElement, sheet: HTMLCanvasElement | null, debug: DebugItem[], markers: DebugMarker[], missingViews: string[], missingJoints: { id: string; x: number; y: number }[], roiLines = false) {
   list.innerHTML = '';
   if (!sheet) { cv.width = 1; cv.height = 1; return; }
   const s = Math.min(1, 900 / sheet.width);
@@ -235,6 +244,13 @@ function drawDebug(cv: HTMLCanvasElement, list: HTMLElement, sheet: HTMLCanvasEl
     ctx.fillStyle = 'rgba(0,0,0,0.8)'; ctx.fillRect(x, y - fs, w, fs + 4);
     ctx.fillStyle = col; ctx.fillText(t, x + 3, y);
   };
+  if (roiLines) {
+    // SHEET 2 の固定ROIの境界（40% / 60%）
+    ctx.setLineDash([6, 4]); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+    for (const f of [SHEET2_ROI.front[1], SHEET2_ROI.right[1]]) { ctx.beginPath(); ctx.moveTo(f * cv.width, 0); ctx.lineTo(f * cv.width, cv.height); ctx.stroke(); }
+    ctx.setLineDash([]);
+    tag(4, cv.height - 6, 'JOINT FRONT ROI', '#fff'); tag(SHEET2_ROI.right[0] * cv.width + 4, cv.height - 6, 'JOINT RIGHT ROI', '#fff'); tag(SHEET2_ROI.ref[0] * cv.width + 4, cv.height - 6, 'REFERENCE（解析しない）', '#aaa');
+  }
   for (const id of missingViews) {
     const c = SHEET1_CELLS.find(x => x.id === id);
     if (!c) continue;
@@ -270,14 +286,63 @@ function drawDebug(cv: HTMLCanvasElement, list: HTMLElement, sheet: HTMLCanvasEl
   for (const d of debug.filter(x => !x.ok)) add(false, `候補（${Math.round(d.box.x0)},${Math.round(d.box.y0)} 幅${Math.round(d.box.x1 - d.box.x0)} 高${Math.round(d.box.y1 - d.box.y0)}px）：${d.reason ?? ''}`);
 }
 
+/** 画像の簡易指紋（縮小した画素の並び）。SHEET 1 と SHEET 2 に同じ画像を選んでいないかの確認用 */
+function fingerprint(c: HTMLCanvasElement): string {
+  const t = document.createElement('canvas'); t.width = 32; t.height = 18;
+  const x = t.getContext('2d', { willReadFrequently: true })!;
+  x.drawImage(c, 0, 0, 32, 18);
+  const d = x.getImageData(0, 0, 32, 18).data;
+  let h = 0;
+  for (let i = 0; i < d.length; i += 4) h = (h * 31 + (d[i] >> 3) * 7 + (d[i + 1] >> 3) * 3 + (d[i + 2] >> 3) + (d[i + 3] >> 6)) | 0;
+  return `${c.width}x${c.height}:${h}`;
+}
+
+/** 入力の確認：元画像2枚と、各ROI（どの入力から切り出したか）を並べる */
+function renderInputs() {
+  const box = $('#inputs'); box.innerHTML = '';
+  const thumb = (src: HTMLCanvasElement | null | undefined, label: string, sub: string, cls = '') => {
+    const fig = document.createElement('figure'); if (cls) fig.className = cls;
+    const cv = document.createElement('canvas');
+    if (src) {
+      const k = Math.min(1, 320 / Math.max(src.width, src.height));
+      cv.width = Math.max(1, Math.round(src.width * k)); cv.height = Math.max(1, Math.round(src.height * k));
+      const ctx = cv.getContext('2d')!;
+      ctx.fillStyle = '#26303d'; ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.drawImage(src, 0, 0, cv.width, cv.height);
+    } else { cv.width = 1; cv.height = 1; fig.classList.add('miss'); }
+    const cap = document.createElement('figcaption');
+    cap.innerHTML = `<b>${label}</b><br>${sub}`;
+    fig.append(cv, cap); return fig;
+  };
+  const row1 = document.createElement('div'); row1.className = 'inputRow';
+  row1.append(thumb(state.img1, 'INPUT SHEET 1', state.src1 || '（未選択）'), thumb(state.img2, 'INPUT SHEET 2', state.src2 || '（未選択）'));
+  box.appendChild(row1);
+  if (state.sameInput) { const w = document.createElement('div'); w.className = 'bad'; w.textContent = '⚠ SHEET 1 と SHEET 2 に同じ画像が選ばれています。SHEET 2 を選び直してください'; box.appendChild(w); }
+  const grid = document.createElement('div'); grid.className = 'viewGrid';
+  for (const id of VIEW_IDS) grid.appendChild(thumb(state.s1?.views[id]?.raw, `SHEET 1 ${VIEW_LABEL[id]} ROI`, '元：INPUT SHEET 1', state.s1?.views[id] ? '' : 'miss'));
+  // SHEET 2 は固定ROI（左40%・中央20%）の帯そのものと、そこから見つけた体
+  const strip = (r: readonly [number, number]) => {
+    if (!state.img2) return null;
+    const c = document.createElement('canvas');
+    const x0 = Math.round(r[0] * state.img2.width), x1 = Math.round(r[1] * state.img2.width);
+    c.width = x1 - x0; c.height = state.img2.height;
+    c.getContext('2d')!.drawImage(state.img2, x0, 0, c.width, c.height, 0, 0, c.width, c.height);
+    return c;
+  };
+  grid.appendChild(thumb(strip(SHEET2_ROI.front), 'SHEET 2 JOINT FRONT ROI', '元：INPUT SHEET 2（左40%）', state.s2?.front ? '' : 'miss'));
+  grid.appendChild(thumb(strip(SHEET2_ROI.right), 'SHEET 2 JOINT RIGHT ROI', '元：INPUT SHEET 2（中央20%）', state.s2?.right ? '' : 'miss'));
+  box.appendChild(grid);
+}
+
 function renderResult() {
+  renderInputs();
   const missingViews = VIEW_IDS.filter(id => !state.s1?.views[id]);
   drawDebug($('#reg1') as HTMLCanvasElement, $('#dbg1'), state.img1, state.s1?.debug ?? [], [], missingViews, []);
   const s2 = state.s2;
   const missingJ = s2 && s2.front && state.detected
     ? ALL_JOINTS.filter(id => !s2.joints[id]).map(id => { const d = denorm(s2.front!.src, state.detected![id].x, state.detected![id].y); return { id, x: s2.front!.box.x0 + d.px, y: s2.front!.box.y0 + d.py }; })
     : [];
-  drawDebug($('#reg2') as HTMLCanvasElement, $('#dbg2'), state.img2, s2?.debug ?? [], s2?.markers ?? [], [], missingJ);
+  drawDebug($('#reg2') as HTMLCanvasElement, $('#dbg2'), state.img2, s2?.debug ?? [], s2?.markers ?? [], [], missingJ, true);
   const g = $('#viewGrid'); g.innerHTML = '';
   const W = state.s1?.views.front ? state.s1.views.front.src.w / state.s1.views.front.src.h : 1;
   const add = (label: string, view: { src: SourceImage; raw: HTMLCanvasElement } | undefined, kind: 'side' | 'top' | 'part' = 'side', partId?: PartId) => {
@@ -348,7 +413,7 @@ function renderWarnings() {
   msgs.forEach(m => { const d = document.createElement('div'); d.textContent = '⚠ ' + m; w.appendChild(d); });
   if (state.joints) {
     const found = state.s2?.found ?? 0;
-    $('#jointSummary').textContent = `SHEET 2 のマーカーから検出：${found} / ${ALL_JOINTS.length}（点線の丸は推定。指で修正できます）。奥行き（z）をマーカーで決めた関節：${ALL_JOINTS.filter(id => state.joints![id].zSource === 'marker').length}`;
+    $('#jointSummary').textContent = `FRONT marker = ${found}/${ALL_JOINTS.length}、RIGHT marker = ${state.s2?.foundRight ?? 0}/${RIGHT_MARKER_KEYS.length}（点線の丸は推定。指で修正できます）。奥行き（z）をマーカーで決めた関節：${ALL_JOINTS.filter(id => state.joints![id].zSource === 'marker').length}`;
   }
   const lg = $('#legend'); lg.innerHTML = '';
   for (const m of MARKERS) { const sp = document.createElement('span'); sp.innerHTML = `<i style="background:${rgbHex(m.rgb)}"></i>${m.key}`; lg.appendChild(sp); }

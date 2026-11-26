@@ -23,7 +23,16 @@ export interface Sheet1 { views: Partial<Record<ViewId, View>>; parts: Partial<R
 
 export interface Joint { x: number; y: number; z: number; source: 'marker' | 'estimate' | 'manual'; zSource: 'marker' | 'estimate' | 'manual' }
 export type Joints = Record<JointId, Joint>;
-export interface Sheet2 { front?: View; right?: View; joints: Partial<Joints>; found: number; warnings: string[]; regions: { label: string; box: Box }[]; debug: DebugItem[]; markers: DebugMarker[]; size: { w: number; h: number } }
+export interface Sheet2 {
+  front?: View; right?: View; joints: Partial<Joints>; found: number; foundRight: number; warnings: string[]; regions: { label: string; box: Box }[];
+  debug: DebugItem[]; markers: DebugMarker[]; size: { w: number; h: number };
+  source: string; // 解析に使った入力画像の識別名（SHEET 1 と取り違えていないかの確認用）
+  roi: { front: Box; right: Box; ref: Box };
+}
+/** SHEET 2 の固定ROI（横方向の割合）：左40% = JOINT FRONT、中央20% = JOINT RIGHT、右40% = REFERENCE */
+export const SHEET2_ROI = { front: [0, 0.4], right: [0.4, 0.6], ref: [0.6, 1] } as const;
+/** RIGHT 図で描く規格のマーカー（9個） */
+export const RIGHT_MARKER_KEYS = ['HEAD', 'NECK', 'CHEST', 'SPINE', 'HIPS', 'SHOULDER', 'HIP', 'KNEE', 'ANKLE'];
 
 // ------------------------------------------------------------------ 前景と領域
 interface Fg { mask: Uint8Array; w: number; h: number; hadAlpha: boolean; data: Uint8ClampedArray }
@@ -191,7 +200,8 @@ function makeView(id: string, sheet: HTMLCanvasElement, fg: Fg, blob: Blob, open
 }
 
 // ------------------------------------------------------------------ SHEET 1
-export function parseSheet1(sheet: HTMLCanvasElement): Sheet1 {
+export function parseSheet1(sheet: HTMLCanvasElement, source = 'SHEET 1'): Sheet1 {
+  void source;
   const warnings: string[] = [];
   const fg = foreground(sheet);
   const { blobs, openedLabel, rejected } = detectBlobs(fg);
@@ -351,30 +361,39 @@ function countMarkerPixels(fg: Fg, b: Box): number {
 }
 
 // ------------------------------------------------------------------ SHEET 2
-export function parseSheet2(sheet: HTMLCanvasElement): Sheet2 {
+export function parseSheet2(sheet: HTMLCanvasElement, source = 'SHEET 2'): Sheet2 {
   const warnings: string[] = [];
   const regions: Sheet2['regions'] = [];
-  const fg = foreground(sheet);
-  const { blobs, openedLabel, rejected } = detectBlobs(fg);
-  const debug: DebugItem[] = [...rejected];
+  const debug: DebugItem[] = [];
   const markers: DebugMarker[] = [];
-  const size = { w: fg.w, h: fg.h };
-  // マーカーを多く含む背の高い塊が JOINT MARKERS の図。幅広が FRONT、細い方が RIGHT
-  const maxH = Math.max(0, ...blobs.map(b => bh(b.box)));
-  const scored = blobs.map(b => ({ b, m: bh(b.box) >= maxH * 0.5 ? countMarkerPixels(fg, b.box) : 0 }));
-  const cands = scored.filter(c => bh(c.b.box) >= maxH * 0.5 && c.m > 0);
-  const frontC = cands.filter(c => bw(c.b.box) / bh(c.b.box) > 0.6).sort((a, b) => b.m - a.m)[0];
-  const rightC = cands.filter(c => c !== frontC && bw(c.b.box) / bh(c.b.box) <= 0.6).sort((a, b) => b.m - a.m)[0];
-  for (const c of scored) {
-    const ar = (bw(c.b.box) / bh(c.b.box)).toFixed(2);
-    if (c === frontC) debug.push({ box: c.b.box, label: 'JOINT FRONT', ok: true, reason: `マーカー画素 ${c.m}・縦横比 ${ar} > 0.6` });
-    else if (c === rightC) debug.push({ box: c.b.box, label: 'JOINT RIGHT', ok: true, reason: `マーカー画素 ${c.m}・縦横比 ${ar} ≤ 0.6` });
-    else debug.push({ box: c.b.box, label: '候補外', ok: false, reason: bh(c.b.box) < maxH * 0.5 ? '背が低い（最大の50%未満）' : c.m === 0 ? 'マーカー色の画素がない' : `マーカー画素 ${c.m}（より多い候補を採用）` });
-  }
-  const front = frontC ? makeView('jointFront', sheet, fg, frontC.b, openedLabel) : undefined;
-  const right = rightC ? makeView('jointRight', sheet, fg, rightC.b, openedLabel) : undefined;
-  if (front) regions.push({ label: 'JOINT FRONT', box: front.box }); else warnings.push('SHEET 2 で T-POSE / JOINT MARKERS FRONT（マーカー付きの正面図）が見つかりません');
-  if (right) regions.push({ label: 'JOINT RIGHT', box: right.box }); else warnings.push('SHEET 2 で JOINT MARKERS RIGHT（マーカー付きの右側面図）が見つかりません。奥行きは0として扱います');
+  const size = { w: sheet.width, h: sheet.height };
+  const roiBox = (r: readonly [number, number]): Box => ({ x0: Math.round(r[0] * sheet.width), y0: 0, x1: Math.round(r[1] * sheet.width) - 1, y1: sheet.height - 1 });
+  const roi = { front: roiBox(SHEET2_ROI.front), right: roiBox(SHEET2_ROI.right), ref: roiBox(SHEET2_ROI.ref) };
+
+  /** ROI だけを切り出して解析し、その中のいちばん背の高い絵（体）を返す。座標はシート全体に戻す */
+  const pick = (label: string, box: Box): View | undefined => {
+    const w = box.x1 - box.x0 + 1, h = box.y1 - box.y0 + 1;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d')!.drawImage(sheet, box.x0, box.y0, w, h, 0, 0, w, h);
+    const fg = foreground(c);
+    const { blobs, openedLabel, rejected } = detectBlobs(fg);
+    const shift = (b: Box): Box => ({ x0: b.x0 + box.x0, y0: b.y0 + box.y0, x1: b.x1 + box.x0, y1: b.y1 + box.y0 });
+    for (const r of rejected) debug.push({ ...r, box: shift(r.box) });
+    const best = [...blobs].sort((p, q) => bh(q.box) - bh(p.box))[0];
+    for (const bl of blobs) if (bl !== best) debug.push({ box: shift(bl.box), label: '候補外', ok: false, reason: `${label} ROI 内でいちばん背の高い絵ではない` });
+    if (!best) return undefined;
+    const v = makeView(label === 'JOINT FRONT' ? 'jointFront' : 'jointRight', c, fg, best, openedLabel);
+    v.box = shift(v.box);
+    debug.push({ box: v.box, label, ok: true, reason: `${label} ROI（横 ${Math.round(box.x0 / sheet.width * 100)}〜${Math.round((box.x1 + 1) / sheet.width * 100)}%）でいちばん背の高い絵・縦横比 ${(v.src.w / v.src.h).toFixed(2)}` });
+    return v;
+  };
+  const front = pick('JOINT FRONT', roi.front);
+  const right = pick('JOINT RIGHT', roi.right);
+  if (front) regions.push({ label: 'JOINT FRONT', box: front.box }); else warnings.push('SHEET 2 の左40%（JOINT FRONT）に絵が見つかりません');
+  if (right) regions.push({ label: 'JOINT RIGHT', box: right.box }); else warnings.push('SHEET 2 の中央20%（JOINT RIGHT）に絵が見つかりません。奥行きは0として扱います');
+  if (front && front.src.w / front.src.h <= 0.6) warnings.push('JOINT FRONT が細長い形です（Tポーズの正面図ではない可能性）');
+  if (right && right.src.w / right.src.h > 0.6) warnings.push('JOINT RIGHT が幅広い形です（右側面図ではない可能性）');
 
   const joints: Partial<Joints> = {};
   const toSheet = (v: View, b: MBlob) => ({ x: v.box.x0 + b.sx / b.n, y: v.box.y0 + b.sy / b.n, r: Math.max(bw(b.box), bh(b.box)) / 2 });
@@ -425,7 +444,11 @@ export function parseSheet2(sheet: HTMLCanvasElement): Sheet2 {
   const found = Object.keys(joints).length;
   const missing = ALL_JOINTS.filter(id => !joints[id]);
   if (front && missing.length) warnings.push(`マーカーが見つからない関節：${missing.join(', ')}（SHEET 2 のシルエットから推定。指で修正できます）`);
-  return { front, right, joints, found, warnings, regions, debug, markers, size };
+  // RIGHT 図で見つかった規格マーカー（9種類）の数
+  const rightKeys = new Set<string>();
+  for (const m of markers) if (m.ok && m.label.endsWith('(z)')) rightKeys.add(m.label.replace('(z)', ''));
+  const foundRight = RIGHT_MARKER_KEYS.filter(k => rightKeys.has(k)).length;
+  return { front, right, joints, found, foundRight, warnings, regions, debug, markers, size, source, roi };
 }
 
 /** マーカーが無い関節を、SHEET 2 の正面シルエットから推定した体型で埋める（SHEET 1 からは探さない） */

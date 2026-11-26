@@ -127,3 +127,11 @@ a.secondary { text-decoration: none; display: inline-block; }
 .dbgList summary { font-size: 12px; }
 .dbgList .dok { color: var(--acc); padding: 1px 0; }
 .dbgList .dng { color: #ff8a95; padding: 1px 0; }
+.inputRow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.inputRow figure, #inputs .viewGrid figure { margin: 0; background: #0b0f14; border: 1px solid var(--line); border-radius: 10px; padding: 4px; text-align: center; }
+.inputRow canvas { width: 100%; height: auto; display: block; }
+#inputs figcaption { font-size: 10px; color: var(--dim); line-height: 1.3; word-break: break-all; }
+#inputs figcaption b { color: var(--text); }
+#inputs .viewGrid { margin-bottom: 12px; }
+#inputs .miss { border-color: #ff5d6c; }
+.bad { color: #ff8a95; font-size: 12px; margin: 4px 0 8px; font-weight: 700; }
