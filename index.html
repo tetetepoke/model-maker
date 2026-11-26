@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0a0d12">
+<title>3D MODEL MAKER — ELEMENT 3D Studio</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<header class="top">
+  <h1>3D <b>MODEL MAKER</b></h1>
+  <span class="badge">STEP 1–6</span>
+</header>
+
+<div class="stage" id="stage">
+  <div class="empty" id="empty">画像を読み込むと、ここに3Dが出ます</div>
+  <div class="views" id="views">
+    <button data-view="front">正面</button><button data-view="right">右</button><button data-view="back">背面</button><button data-view="left">左</button><button data-view="top">上</button>
+    <button data-act="wire" id="btnWire">線</button>
+  </div>
+  <div class="info" id="info"></div>
+</div>
+
+<main>
+  <section class="card">
+    <h2><i>1</i>種類と画像</h2>
+    <div class="chips" id="cats"></div>
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept="image/*">
+      <img id="srcPreview" alt="">
+      <span id="dropText">正面の画像を選ぶ（透明PNG推奨）</span>
+    </label>
+    <p class="note">三面図（側面・背面）は次のステップで対応予定。いまは正面1枚から作ります。</p>
+  </section>
+
+  <section class="card" id="secContour" hidden>
+    <h2><i>2</i>輪郭</h2>
+    <canvas id="contourCanvas"></canvas>
+    <div class="ctrl" id="tolRow"><span>背景の切り抜き</span><input type="range" id="tolerance" min="5" max="120" value="40"><output></output></div>
+    <div class="ctrl"><span>輪郭のなめらかさ</span><input type="range" id="smoothing" min="0" max="6" value="2"><output></output></div>
+  </section>
+
+  <section class="card" id="secShape" hidden>
+    <h2><i>3</i>立体の作り方</h2>
+    <div class="seg" id="mode">
+      <button data-v="inflate">ふくらませる<small>石・鉱石・キャラ</small></button>
+      <button data-v="extrude">押し出す<small>武器・道具・板状</small></button>
+    </div>
+    <div class="ctrl"><span>細かさ</span><input type="range" id="detail" min="32" max="140" step="4" value="72"><output></output></div>
+  </section>
+
+  <section class="card" id="secAdjust" hidden>
+    <h2><i>4</i>調整</h2>
+    <div class="chips small" id="looks"></div>
+    <div class="ctrl"><span>厚み</span><input type="range" id="thickness" min="0.04" max="1.2" step="0.01"><output></output></div>
+    <div class="ctrl"><span>丸み</span><input type="range" id="roundness" min="0" max="1" step="0.01"><output></output></div>
+    <div class="ctrl"><span>凹凸</span><input type="range" id="bump" min="0" max="1" step="0.01" value="0.3"><output></output></div>
+    <details>
+      <summary>大きさ・回転・色</summary>
+      <div class="ctrl"><span>高さ (m)</span><input type="range" id="heightM" min="0.05" max="5" step="0.01"><output></output></div>
+      <div class="ctrl"><span>幅</span><input type="range" id="scaleX" min="0.3" max="2" step="0.01" value="1"><output></output></div>
+      <div class="ctrl"><span>奥行き</span><input type="range" id="scaleZ" min="0.3" max="3" step="0.01" value="1"><output></output></div>
+      <div class="ctrl"><span>回転 Y</span><input type="range" id="rotY" min="-180" max="180" step="1" value="0"><output></output></div>
+      <div class="ctrl"><span>傾き X</span><input type="range" id="rotX" min="-90" max="90" step="1" value="0"><output></output></div>
+      <div class="ctrl"><span>位置 Y</span><input type="range" id="posY" min="-1" max="1" step="0.01" value="0"><output></output></div>
+      <div class="ctrl"><span>色</span><input type="color" id="tint" value="#ffffff"></div>
+      <div class="ctrl"><span>金属感</span><input type="range" id="metalness" min="0" max="1" step="0.01" value="0"><output></output></div>
+      <div class="ctrl"><span>粗さ</span><input type="range" id="roughness" min="0" max="1" step="0.01" value="0.75"><output></output></div>
+      <div class="ctrl"><span>不透明度</span><input type="range" id="opacity" min="0.2" max="1" step="0.01" value="1"><output></output></div>
+    </details>
+  </section>
+
+  <section class="card" id="secExport" hidden>
+    <h2><i>6</i>GLB 書き出し</h2>
+    <div class="ctrl"><span>アイテムID</span><input type="text" id="itemId" list="knownIds" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="iron_ore"></div>
+    <datalist id="knownIds"></datalist>
+    <div class="ctrl"><span>テクスチャ</span>
+      <select id="texSize"><option value="256">256px（軽い）</option><option value="512" selected>512px（標準）</option><option value="1024">1024px（きれい）</option></select>
+    </div>
+    <div class="ready" id="ready"></div>
+    <button class="primary" id="btnExport">GLB を書き出す</button>
+    <div class="howto">
+      <b>ゲームに入れる方法</b>
+      <ol>
+        <li>書き出した <code id="fileName">model.glb</code> を、使うゲームの <code id="dirName">public/assets/items/</code> などに置く</li>
+        <li>ELEMENT 118 の場合は <code>materials.ts</code> の該当アイテムに次を追加（例）：</li>
+      </ol>
+      <pre id="snippet"></pre>
+      <button class="secondary" id="btnCopy">コピー</button>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast" hidden></div>
+<script type="module" src="./app.js"></script>
+</body>
+</html>
