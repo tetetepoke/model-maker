@@ -3,8 +3,6 @@
 iPhone の Safari だけで、画像からゲーム用の3Dモデル（GLB）を作る単体アプリ。完全クライアントサイド（GPU・サーバー・有料API不要）で、静的ホスティング（GitHub Pages 等）で動く。ゲーム本体（ELEMENT 118）とは別アプリ。
 
 
-- 公開URL：https://tetetepoke.github.io/model-maker/
-- 設計シート → 3D：https://tetetepoke.github.io/model-maker/sheet.html
 - 開く：`index.html`（`app.js` はビルド済み。そのまま配信するだけで動く）
 - 開発：`npm install && npm run build`（`src/*.ts` → `app.js`）
 
@@ -27,9 +25,14 @@ Element 118 Sheet V1 規格（`docs/SHEET_SPEC_V1.md`）の2枚の設計シー�
 3. 関節はFRONT・RIGHTの図の上で指でドラッグして修正
 4. 3D生成：5方向シルエットから Visual Hull（形状測定用）。FRONT〜TOP のボタンで正投影に切り替え、元シルエットを半透明で重ねて一致度（IoU）を表示
 
-実装済み：Phase 1（規格・読み込み・解析）、Phase 2（Visual Hull・重ね合わせ比較）
-次：Phase 3 Base Mesh fitting → Phase 4 Skeleton / Skinning → Phase 5 テクスチャ・GLB
+実装済み：Phase 1（規格・読み込み・解析）、Phase 2（Visual Hull・重ね合わせ比較）、Standard Base Mesh V1（下記）
+次：Phase 3 Visual Hull fitting（Base Mesh V1 の頂点位置だけを動かす）→ テクスチャ・GLB
 すべてブラウザ内の画像解析＋幾何計算（AI・外部API・GPUサーバー不使用）。`sample.html` はサンプルシート生成用の開発ページ。
+
+## Element 118 Standard Base Mesh V1（base.html）
+全キャラ共通の人体メッシュ（`src/basemesh.ts`、固定データ `samples/e118_base_mesh_v1.glb`、仕様 `docs/BASE_MESH_V1.md`）。
+閉じた1枚の四角形メッシュ（形の頂点 5,954／四角形 5,952）、UV 済み、SHEET 2 の17関節＝17ボーン、スキンウェイト済み。
+確認画面：Solid / Wireframe / UV Checker / Skeleton / Skin Weight、FRONT〜TOP・FREE、T-POSE / ARMS DOWN / ELBOW 90 / KNEE 90 / HIP BEND / HEAD TURN、GLB 書き出し＋読み直し検証。
 
 ## 次のステップ（未実装）
 三面図、基本形状の組み合わせ、キャラクター／モンスター／建物モード、自動ボーン。

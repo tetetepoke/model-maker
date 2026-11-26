@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0a0d12">
+<title>ELEMENT 118 STANDARD BASE MESH V1</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<header class="top">
+  <h1>E118 <b>STANDARD BASE MESH</b></h1>
+  <a class="badge" href="./sheet.html">設計シート → 3D</a>
+</header>
+
+<div class="stage" id="stage">
+  <div class="info" id="info">E118-BASE-V1</div>
+  <div class="views" id="views">
+    <button data-view="front">FRONT</button><button data-view="right">RIGHT</button><button data-view="back">BACK</button><button data-view="left">LEFT</button><button data-view="top">TOP</button><button data-view="free">FREE</button>
+  </div>
+</div>
+<div class="toggles" id="toggles">
+  <div class="seg small shade" id="shade">
+    <button data-v="solid" class="on">Solid</button><button data-v="uv">UV Checker</button><button data-v="weight">Skin Weight</button>
+  </div>
+  <label><input type="checkbox" id="tWire">Wireframe</label>
+  <label><input type="checkbox" id="tBone" checked>Skeleton</label>
+  <select id="weightBone" class="wsel" hidden aria-label="表示するボーン"></select>
+</div>
+
+<main>
+  <section class="card">
+    <h2><i>1</i>変形テスト</h2>
+    <div class="poseGrid" id="poses">
+      <button data-p="tpose" class="on">T-POSE</button><button data-p="armsDown">ARMS DOWN</button><button data-p="elbow90">ELBOW 90</button>
+      <button data-p="knee90">KNEE 90</button><button data-p="hipBend">HIP BEND</button><button data-p="headTurn">HEAD TURN</button>
+    </div>
+    <p class="note">脇・肩・股・膝が大きく潰れないかを確認します。指1本で回転、2本でズーム。Skin Weight でボーンを選ぶと、そのボーンの影響範囲が赤く出ます。</p>
+  </section>
+
+  <section class="card">
+    <h2><i>2</i>Base Mesh V1 の情報</h2>
+    <table class="stat" id="stats"></table>
+    <p class="note" id="fixedNote"></p>
+    <p class="note"><a class="secondary" href="./docs/BASE_MESH_V1.md" target="_blank">Base Mesh V1 仕様書</a></p>
+  </section>
+
+  <section class="card">
+    <h2><i>3</i>UV 展開図</h2>
+    <canvas id="uvCanvas" class="uvCanvas" width="1024" height="1024"></canvas>
+    <p class="note">頭の島の中央（いちばん広い面）が顔です。継ぎ目は背中の中心線と腕の下側に固定しています。フィッティングで形が変わっても UV は変わりません。</p>
+  </section>
+
+  <section class="card">
+    <h2><i>4</i>ボーン対応表（SHEET 2 関節 ↔ ボーン）</h2>
+    <table class="stat bones" id="boneTable"></table>
+  </section>
+
+  <section class="card">
+    <h2><i>5</i>GLB 書き出しと検証</h2>
+    <button class="primary" id="btnExport">GLB を書き出して検証</button>
+    <table class="stat" id="glbCheck" hidden></table>
+    <button class="secondary wide" id="btnSave" hidden>e118_base_mesh_v1.glb を保存</button>
+  </section>
+</main>
+
+<div class="toast" id="toast" hidden></div>
+<script type="module" src="./base.js"></script>
+</body>
+</html>
