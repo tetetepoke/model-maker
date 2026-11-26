@@ -1,0 +1,15 @@
+/* ---- STANDARD BASE MESH 確認画面 ---- */
+.toggles .seg.shade { margin: 0; flex: 1 1 100%; }
+.toggles .wsel { flex: 1 1 100%; background: #0b0f14; border: 1px solid var(--line); border-radius: 9px; padding: 6px 8px; font-size: 16px; color: inherit; }
+.poseGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.poseGrid button { padding: 11px 4px; border-radius: 11px; border: 1px solid var(--line); background: #0d1218; font-weight: 700; font-size: 12px; letter-spacing: .04em; cursor: pointer; }
+.poseGrid button.on { border-color: var(--acc); color: var(--acc); background: #12302d; }
+table.stat { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+table.stat th, table.stat td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.stat th { color: var(--dim); font-weight: 500; width: 40%; }
+table.stat small { color: var(--dim); }
+table.stat .ok { color: var(--acc); }
+table.stat .ng { color: #ff6b6b; }
+table.stat.bones th { width: auto; }
+table.stat .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
+.uvCanvas { width: 100%; aspect-ratio: 1; border-radius: 8px; border: 1px solid var(--line); display: block; }

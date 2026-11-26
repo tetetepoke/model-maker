@@ -182,8 +182,11 @@ async function setSheet(n: 1 | 2, blob: Blob) {
 }
 for (const n of [1, 2] as const) {
   $('#file' + n).addEventListener('change', async e => {
-    const f = (e.target as HTMLInputElement).files?.[0];
+    const input = e.target as HTMLInputElement;
+    const f = input.files?.[0];
     if (f) { try { await setSheet(n, f); } catch (err) { toast('画像を読み込めません: ' + (err as Error).message); } }
+    // 選択欄を空に戻す：同じ画像を選び直したときや、別ページから「戻る」で帰ったときも change が必ず起きるように
+    input.value = '';
   });
 }
 $('#btnSample').onclick = async () => {
