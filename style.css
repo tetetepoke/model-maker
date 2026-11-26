@@ -122,3 +122,8 @@ a.secondary { text-decoration: none; display: inline-block; }
 .seg.small button { padding: 6px 4px; font-size: 12px; font-weight: 600; }
 .iouAvg { font-weight: 700; color: var(--text); }
 .partSel { background: #0b0f14; border: 1px solid var(--line); border-radius: 6px; font-size: 10px; padding: 1px 2px; color: var(--acc); }
+.dbgCanvas { width: 100%; height: auto; display: block; background: #0b0f14; border-radius: 8px; margin-bottom: 4px; }
+.dbgList { margin: 0 0 10px; font-size: 11px; }
+.dbgList summary { font-size: 12px; }
+.dbgList .dok { color: var(--acc); padding: 1px 0; }
+.dbgList .dng { color: #ff8a95; padding: 1px 0; }

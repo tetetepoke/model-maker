@@ -16,11 +16,14 @@ export interface Box { x0: number; y0: number; x1: number; y1: number }
 /** 検出したビュー。src は体の範囲（足底〜頭頂）で切り抜いたもの。box はシート上の位置（デバッグ表示用） */
 export interface View { id: string; src: SourceImage; box: Box; raw: HTMLCanvasElement }
 
-export interface Sheet1 { views: Partial<Record<ViewId, View>>; parts: Partial<Record<PartId, View>>; warnings: string[]; regions: { label: string; box: Box }[] }
+/** 解析デバッグ：見つけた塊すべてと、その判定（採用／不採用の理由） */
+export interface DebugItem { box: Box; label: string; ok: boolean; reason?: string }
+export interface DebugMarker { x: number; y: number; r: number; color: string; label: string; ok: boolean; reason?: string }
+export interface Sheet1 { views: Partial<Record<ViewId, View>>; parts: Partial<Record<PartId, View>>; warnings: string[]; regions: { label: string; box: Box }[]; debug: DebugItem[]; size: { w: number; h: number } }
 
 export interface Joint { x: number; y: number; z: number; source: 'marker' | 'estimate' | 'manual'; zSource: 'marker' | 'estimate' | 'manual' }
 export type Joints = Record<JointId, Joint>;
-export interface Sheet2 { front?: View; right?: View; joints: Partial<Joints>; found: number; warnings: string[]; regions: { label: string; box: Box }[] }
+export interface Sheet2 { front?: View; right?: View; joints: Partial<Joints>; found: number; warnings: string[]; regions: { label: string; box: Box }[]; debug: DebugItem[]; markers: DebugMarker[]; size: { w: number; h: number } }
 
 // ------------------------------------------------------------------ 前景と領域
 interface Fg { mask: Uint8Array; w: number; h: number; hadAlpha: boolean; data: Uint8ClampedArray }
@@ -123,13 +126,17 @@ function detectFrames(fg: Fg): Box[] {
     && c.area > (bw(c.box) + bh(c.box)) * 1.5).map(c => c.box);
 }
 
-function detectBlobs(fg: Fg): { blobs: Blob[]; openedLabel: Int32Array } {
+function detectBlobs(fg: Fg): { blobs: Blob[]; openedLabel: Int32Array; rejected: DebugItem[] } {
   const { w, h, mask } = fg;
   const r = Math.max(2, Math.round(Math.min(w, h) * 0.004)); // これより細い線（文字・枠・ガイド線）は消える
   const opened = morph(morph(mask, w, h, r, false), w, h, r, true);
   const { label, comps } = components(opened, w, h);
   const minArea = w * h * 0.0012;
   const good = comps.filter(c => c.area >= minArea && c.area / (bw(c.box) * bh(c.box)) >= 0.1);
+  const rejected: DebugItem[] = comps.filter(c => !good.includes(c) && c.area >= minArea * 0.3).map(c => ({
+    box: c.box, label: '除外', ok: false,
+    reason: c.area < minArea ? `小さすぎ（面積 ${(c.area / (w * h) * 100).toFixed(2)}% < 0.12%）` : `線・枠とみなした（塗りの密度 ${Math.round(c.area / (bw(c.box) * bh(c.box)) * 100)}% < 10%）`,
+  }));
   // 近い塊（離れて描かれた手先・髪の毛先など）は、大きい塊の範囲内ならまとめる
   good.sort((a, b) => b.area - a.area);
   const blobs: Blob[] = [];
@@ -138,7 +145,7 @@ function detectBlobs(fg: Fg): { blobs: Blob[]; openedLabel: Int32Array } {
     if (host) { host.comps.push(c); host.box = union(host.box, c.box); host.area += c.area; }
     else blobs.push({ comps: [c], box: { ...c.box }, area: c.area });
   }
-  return { blobs, openedLabel: label };
+  return { blobs, openedLabel: label, rejected };
 }
 
 /** 塊の範囲を元画像から切り出してビューにする。マスクは元の前景のうち、塊につながる部分だけ（文字や枠は入らない） */
@@ -187,11 +194,15 @@ function makeView(id: string, sheet: HTMLCanvasElement, fg: Fg, blob: Blob, open
 export function parseSheet1(sheet: HTMLCanvasElement): Sheet1 {
   const warnings: string[] = [];
   const fg = foreground(sheet);
-  const { blobs, openedLabel } = detectBlobs(fg);
+  const { blobs, openedLabel, rejected } = detectBlobs(fg);
   const views: Sheet1['views'] = {};
   const parts: Sheet1['parts'] = {};
   const regions: Sheet1['regions'] = [];
-  if (!blobs.length) return { views, parts, warnings: ['絵が見つかりません'], regions };
+  const debug: DebugItem[] = [...rejected];
+  const size = { w: fg.w, h: fg.h };
+  if (!blobs.length) return { views, parts, warnings: ['絵が見つかりません'], regions, debug, size };
+  const status = new Map<Blob, DebugItem>();
+  const mark = (b: Blob, label: string, ok: boolean, reason?: string) => status.set(b, { box: b.box, label, ok, reason });
 
   // 全身ビュー：背の高い塊のうち、同じ段（足元の高さが近い）に並んでいるもの
   const maxH = Math.max(...blobs.map(b => bh(b.box)));
@@ -208,7 +219,12 @@ export function parseSheet1(sheet: HTMLCanvasElement): Sheet1 {
   } else {
     warnings.push(`全身ビューが ${row.length} 個しか見つかりません（4個必要：FRONT / RIGHT / BACK / LEFT）`);
   }
+  for (const b of blobs) {
+    if (bh(b.box) < maxH * 0.6) mark(b, '候補外', false, `背が低い（高さ ${Math.round(bh(b.box) / maxH * 100)}% < 最大の60%）`);
+    else if (!row.includes(b)) mark(b, '候補外', false, Math.abs(b.box.y1 - rowY) >= maxH * 0.35 ? '足元の高さが他の全身ビューと違う' : '5体目以降（面積が小さい方を除外）');
+  }
   row.slice(0, 4).forEach((b, i) => {
+    mark(b, order[i].toUpperCase(), true, `左から${i + 1}番目の全身ビュー（縦横比 ${(bw(b.box) / bh(b.box)).toFixed(2)}）`);
     views[order[i]] = makeView(order[i], sheet, fg, b, openedLabel);
     regions.push({ label: order[i].toUpperCase(), box: views[order[i]]!.box });
   });
@@ -219,6 +235,7 @@ export function parseSheet1(sheet: HTMLCanvasElement): Sheet1 {
   const fw = views.front ? bw(views.front.box) : maxH;
   const topCand = lower.filter(b => bw(b.box) > fw * 0.6 && bw(b.box) < fw * 1.6 && bh(b.box) < maxH * 0.6).sort((a, b) => a.box.x0 - b.box.x0)[0];
   if (topCand) {
+    mark(topCand, 'TOP', true, `FRONT幅の ${(bw(topCand.box) / fw).toFixed(2)} 倍・下段の左端`);
     views.top = makeView('top', sheet, fg, topCand, openedLabel);
     regions.push({ label: 'TOP', box: views.top.box });
   } else warnings.push('TOP が見つかりません（FRONT と同じくらいの横幅の上面図）');
@@ -239,11 +256,12 @@ export function parseSheet1(sheet: HTMLCanvasElement): Sheet1 {
       let k: number;
       if (useFrames) {
         const fi = partFrames.findIndex(f => inside(b.box, f, 0));
-        if (fi < 0) continue;
+        if (fi < 0) { mark(b, 'PARTS', false, 'どのPARTS枠にも入っていない'); continue; }
         k = Math.min(PARTS_SLOTS.length - 1, fi);
       } else k = Math.min(PARTS_SLOTS.length - 1, Math.max(0, Math.floor((cxOf(b.box) - ax0) / slotW)));
       const id = PARTS_SLOTS[k] as PartId;
-      if (parts[id]) continue; // 同じスロットに複数ある場合は大きい方（blobs は面積順）
+      if (parts[id]) { mark(b, 'PARTS', false, `スロット${k + 1}（${id.toUpperCase()}）は使用済み`); continue; }
+      mark(b, 'PARTS:' + id.toUpperCase(), true, useFrames ? `枠 ${k + 1} 番目` : `TOP右端からの6等分で ${k + 1} 番目`);
       parts[id] = makeView(id, sheet, fg, b, openedLabel);
       regions.push({ label: 'PARTS:' + id.toUpperCase(), box: parts[id]!.box });
     }
@@ -255,7 +273,9 @@ export function parseSheet1(sheet: HTMLCanvasElement): Sheet1 {
     const mx = Math.max(...hs), mn = Math.min(...hs);
     if ((mx - mn) / mx > 0.15) warnings.push(`ビューごとの身長が ${Math.round((mx - mn) / mx * 100)}% 違います（身長を1にそろえて解析します）`);
   }
-  return { views, parts, warnings, regions };
+  for (const b of blobs) if (!status.has(b)) mark(b, '候補外', false, '全身ビューの段より上にある／TOP・PARTSの条件外');
+  debug.push(...status.values());
+  return { views, parts, warnings, regions, debug, size };
 }
 
 // ------------------------------------------------------------------ 関節マーカー（色相＋予想位置＋形）
@@ -281,8 +301,8 @@ export function classifyMarker(r: number, g: number, b: number): number {
   return best;
 }
 
-interface MBlob { key: string; n: number; sx: number; sy: number; box: Box }
-function findMarkerBlobs(src: SourceImage): MBlob[] {
+interface MBlob { key: string; n: number; sx: number; sy: number; box: Box; reason?: string }
+function findMarkerBlobs(src: SourceImage, all?: MBlob[]): MBlob[] {
   const { w, h, canvas } = src;
   const d = canvas.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, w, h).data;
   const lab = new Int8Array(w * h).fill(-1);
@@ -305,10 +325,16 @@ function findMarkerBlobs(src: SourceImage): MBlob[] {
   }
   // 形の判定：ほぼ円（縦横比 0.5〜2、塗りの密度 45%以上）、大きさは規格（直径＝身長の3%）の 0.12〜6倍の面積
   const expect = Math.PI * (MARKER_DIAMETER * h / 2) ** 2;
-  return out.filter(b => {
+  for (const b of out) {
     const ar = bw(b.box) / bh(b.box), fill = b.n / (bw(b.box) * bh(b.box));
-    return b.n >= expect * 0.12 && b.n <= expect * 6 && ar > 0.5 && ar < 2 && fill > 0.45;
-  });
+    if (b.n < expect * 0.12) b.reason = `小さすぎ（規格の ${(b.n / expect * 100).toFixed(0)}%）`;
+    else if (b.n > expect * 6) b.reason = `大きすぎ（規格の ${(b.n / expect).toFixed(1)}倍）`;
+    else if (ar <= 0.5 || ar >= 2) b.reason = `円でない（縦横比 ${ar.toFixed(2)}）`;
+    else if (fill <= 0.45) b.reason = `円でない（塗り ${(fill * 100).toFixed(0)}%）`;
+  }
+  // 小さなノイズ（4px未満）はデバッグにも出さない
+  if (all) all.push(...out.filter(b => b.n >= 4));
+  return out.filter(b => !b.reason);
 }
 
 /** 正規化：u = (px − 中心軸) / 身長、v = (足底 − py) / 身長 */
@@ -329,38 +355,57 @@ export function parseSheet2(sheet: HTMLCanvasElement): Sheet2 {
   const warnings: string[] = [];
   const regions: Sheet2['regions'] = [];
   const fg = foreground(sheet);
-  const { blobs, openedLabel } = detectBlobs(fg);
+  const { blobs, openedLabel, rejected } = detectBlobs(fg);
+  const debug: DebugItem[] = [...rejected];
+  const markers: DebugMarker[] = [];
+  const size = { w: fg.w, h: fg.h };
   // マーカーを多く含む背の高い塊が JOINT MARKERS の図。幅広が FRONT、細い方が RIGHT
   const maxH = Math.max(0, ...blobs.map(b => bh(b.box)));
-  const cands = blobs.filter(b => bh(b.box) >= maxH * 0.5).map(b => ({ b, m: countMarkerPixels(fg, b.box) })).filter(c => c.m > 0);
+  const scored = blobs.map(b => ({ b, m: bh(b.box) >= maxH * 0.5 ? countMarkerPixels(fg, b.box) : 0 }));
+  const cands = scored.filter(c => bh(c.b.box) >= maxH * 0.5 && c.m > 0);
   const frontC = cands.filter(c => bw(c.b.box) / bh(c.b.box) > 0.6).sort((a, b) => b.m - a.m)[0];
   const rightC = cands.filter(c => c !== frontC && bw(c.b.box) / bh(c.b.box) <= 0.6).sort((a, b) => b.m - a.m)[0];
+  for (const c of scored) {
+    const ar = (bw(c.b.box) / bh(c.b.box)).toFixed(2);
+    if (c === frontC) debug.push({ box: c.b.box, label: 'JOINT FRONT', ok: true, reason: `マーカー画素 ${c.m}・縦横比 ${ar} > 0.6` });
+    else if (c === rightC) debug.push({ box: c.b.box, label: 'JOINT RIGHT', ok: true, reason: `マーカー画素 ${c.m}・縦横比 ${ar} ≤ 0.6` });
+    else debug.push({ box: c.b.box, label: '候補外', ok: false, reason: bh(c.b.box) < maxH * 0.5 ? '背が低い（最大の50%未満）' : c.m === 0 ? 'マーカー色の画素がない' : `マーカー画素 ${c.m}（より多い候補を採用）` });
+  }
   const front = frontC ? makeView('jointFront', sheet, fg, frontC.b, openedLabel) : undefined;
   const right = rightC ? makeView('jointRight', sheet, fg, rightC.b, openedLabel) : undefined;
   if (front) regions.push({ label: 'JOINT FRONT', box: front.box }); else warnings.push('SHEET 2 で T-POSE / JOINT MARKERS FRONT（マーカー付きの正面図）が見つかりません');
   if (right) regions.push({ label: 'JOINT RIGHT', box: right.box }); else warnings.push('SHEET 2 で JOINT MARKERS RIGHT（マーカー付きの右側面図）が見つかりません。奥行きは0として扱います');
 
   const joints: Partial<Joints> = {};
+  const toSheet = (v: View, b: MBlob) => ({ x: v.box.x0 + b.sx / b.n, y: v.box.y0 + b.sy / b.n, r: Math.max(bw(b.box), bh(b.box)) / 2 });
+  const used = new Set<MBlob>();
   if (front) {
-    const blobsF = findMarkerBlobs(front.src);
+    const allF: MBlob[] = [];
+    const blobsF = findMarkerBlobs(front.src, allF);
     for (const m of MARKERS) {
       const center = m.ids.length === 1;
-      const cand = blobsF.filter(b => b.key === m.key).map(b => ({ ...norm(front.src, b.sx / b.n, b.sy / b.n), n: b.n }))
-        // 解剖学的な予想範囲：高さ＋（中心線上の関節は中央付近、左右の関節は中心から離れた位置）
-        .filter(c => c.v >= m.yRange[0] && c.v <= m.yRange[1] && (center ? Math.abs(c.u) < 0.12 : Math.abs(c.u) > 0.01))
-        .sort((a, b) => b.n - a.n);
-      if (center) {
-        if (cand[0]) joints[m.ids[0]] = { x: cand[0].u, y: cand[0].v, z: 0, source: 'marker', zSource: 'estimate' };
-      } else {
+      const all = blobsF.filter(b => b.key === m.key).map(b => ({ ...norm(front.src, b.sx / b.n, b.sy / b.n), n: b.n, b }));
+      // 解剖学的な予想範囲：高さ＋（中心線上の関節は中央付近、左右の関節は中心から離れた位置）
+      for (const c of all) {
+        if (c.v < m.yRange[0] || c.v > m.yRange[1]) c.b.reason = `${m.key}の高さ範囲外（${c.v.toFixed(2)}、範囲 ${m.yRange[0]}〜${m.yRange[1]}）`;
+        else if (center && Math.abs(c.u) >= 0.12) c.b.reason = `${m.key}は中心付近のはず（横 ${c.u.toFixed(2)}）`;
+        else if (!center && Math.abs(c.u) <= 0.01) c.b.reason = `${m.key}は左右どちらかに寄るはず`;
+      }
+      const cand = all.filter(c => !c.b.reason).sort((a, b) => b.n - a.n);
+      const take = (id: JointId, c: (typeof cand)[number] | undefined) => { if (!c) return; joints[id] = { x: c.u, y: c.v, z: 0, source: 'marker', zSource: 'estimate' }; used.add(c.b); markers.push({ ...toSheet(front, c.b), color: '#36e3c4', label: id, ok: true }); };
+      if (center) take(m.ids[0], cand[0]);
+      else {
         // 画面の右（u > 0）がキャラの左 = _L
-        const L = cand.filter(c => c.u > 0)[0], R = cand.filter(c => c.u < 0)[0];
-        if (L) joints[m.ids[0]] = { x: L.u, y: L.v, z: 0, source: 'marker', zSource: 'estimate' };
-        if (R) joints[m.ids[1]] = { x: R.u, y: R.v, z: 0, source: 'marker', zSource: 'estimate' };
+        take(m.ids[0], cand.filter(c => c.u > 0)[0]);
+        take(m.ids[1], cand.filter(c => c.u < 0)[0]);
       }
     }
+    for (const b of allF) if (!used.has(b)) markers.push({ ...toSheet(front, b), color: '#ff5d6c', label: b.key, ok: false, reason: b.reason ?? '同じ色でより大きいマーカーを採用' });
   }
   if (right && front) {
-    const blobsR = findMarkerBlobs(right.src);
+    const allR: MBlob[] = [];
+    const blobsR = findMarkerBlobs(right.src, allR);
+    for (const b of allR) markers.push({ ...toSheet(right, b), color: b.reason ? '#ff5d6c' : '#36e3c4', label: b.key + '(z)', ok: !b.reason, reason: b.reason });
     for (const m of MARKERS) {
       const cand = blobsR.filter(b => b.key === m.key).map(b => ({ ...norm(right.src, b.sx / b.n, b.sy / b.n), n: b.n }));
       for (const id of m.ids) {
@@ -380,7 +425,7 @@ export function parseSheet2(sheet: HTMLCanvasElement): Sheet2 {
   const found = Object.keys(joints).length;
   const missing = ALL_JOINTS.filter(id => !joints[id]);
   if (front && missing.length) warnings.push(`マーカーが見つからない関節：${missing.join(', ')}（SHEET 2 のシルエットから推定。指で修正できます）`);
-  return { front, right, joints, found, warnings, regions };
+  return { front, right, joints, found, warnings, regions, debug, markers, size };
 }
 
 /** マーカーが無い関節を、SHEET 2 の正面シルエットから推定した体型で埋める（SHEET 1 からは探さない） */

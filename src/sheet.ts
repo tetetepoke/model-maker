@@ -5,8 +5,8 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { buildHull, type HullResult } from './hull';
 import { loadImage, type SourceImage } from './mask';
-import { denorm, fillMissingJoints, parseSheet1, parseSheet2, type Joints, type PartId, type Sheet1, type Sheet2, type ViewId } from './sheetParse';
-import { ALL_JOINTS, BONES, MARKERS, markerOf, PART_IDS_ALL, rgbHex, type JointId } from './sheetSpec';
+import { denorm, fillMissingJoints, parseSheet1, parseSheet2, type DebugItem, type DebugMarker, type Joints, type PartId, type Sheet1, type Sheet2, type ViewId } from './sheetParse';
+import { ALL_JOINTS, BONES, MARKERS, markerOf, PART_IDS_ALL, rgbHex, SHEET1_CELLS, type JointId } from './sheetSpec';
 
 const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector(s) as T;
 const VIEW_IDS: ViewId[] = ['front', 'right', 'back', 'left', 'top'];
@@ -215,27 +215,69 @@ document.querySelectorAll<HTMLButtonElement>('#previewMode button').forEach(b =>
   };
 });
 
-/** シート全体の縮小図に、検出した領域の枠とラベルを描く */
-function drawRegions(cv: HTMLCanvasElement, sheet: HTMLCanvasElement | null, regions: { label: string; box: { x0: number; y0: number; x1: number; y1: number } }[]) {
+/**
+ * 解析デバッグ表示：シート全体に、見つけた塊すべての枠・中心点・判定を重ねる。
+ *   緑系 = 採用（FRONT など）／赤 = 不採用（理由つき）／赤の点線 = 見つからなかったビュー（規格上の位置）
+ *   ○ = 検出したマーカー（緑=採用・赤=不採用）／✕ = マーカーが見つからなかった関節（推定位置）
+ */
+function drawDebug(cv: HTMLCanvasElement, list: HTMLElement, sheet: HTMLCanvasElement | null, debug: DebugItem[], markers: DebugMarker[], missingViews: string[], missingJoints: { id: string; x: number; y: number }[]) {
+  list.innerHTML = '';
   if (!sheet) { cv.width = 1; cv.height = 1; return; }
-  const s = Math.min(1, 640 / sheet.width);
+  const s = Math.min(1, 900 / sheet.width);
   cv.width = Math.round(sheet.width * s); cv.height = Math.round(sheet.height * s);
   const ctx = cv.getContext('2d')!;
   ctx.fillStyle = '#1a2230'; ctx.fillRect(0, 0, cv.width, cv.height);
-  ctx.drawImage(sheet, 0, 0, cv.width, cv.height);
-  ctx.lineWidth = 2; ctx.font = `bold ${Math.max(9, Math.round(cv.width / 45))}px sans-serif`;
-  for (const r of regions) {
-    const col = r.label.startsWith('PARTS') ? '#ffb547' : r.label.startsWith('JOINT') ? '#ff5dd6' : '#36e3c4';
-    ctx.strokeStyle = col; ctx.strokeRect(r.box.x0 * s, r.box.y0 * s, (r.box.x1 - r.box.x0) * s, (r.box.y1 - r.box.y0) * s);
-    const t = r.label.replace('PARTS:', '');
-    ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(r.box.x0 * s, r.box.y0 * s - 2, ctx.measureText(t).width + 6, Math.max(11, cv.width / 40));
-    ctx.fillStyle = col; ctx.fillText(t, r.box.x0 * s + 3, r.box.y0 * s + Math.max(8, cv.width / 50));
+  ctx.globalAlpha = 0.7; ctx.drawImage(sheet, 0, 0, cv.width, cv.height); ctx.globalAlpha = 1;
+  const fs = Math.max(10, Math.round(cv.width / 55));
+  ctx.font = `bold ${fs}px sans-serif`;
+  const tag = (x: number, y: number, t: string, col: string) => {
+    const w = ctx.measureText(t).width + 6;
+    ctx.fillStyle = 'rgba(0,0,0,0.8)'; ctx.fillRect(x, y - fs, w, fs + 4);
+    ctx.fillStyle = col; ctx.fillText(t, x + 3, y);
+  };
+  for (const id of missingViews) {
+    const c = SHEET1_CELLS.find(x => x.id === id);
+    if (!c) continue;
+    const x = c.x0 * cv.width, y = c.y0 * cv.height, w = (c.x1 - c.x0) * cv.width, h = (c.y1 - c.y0) * cv.height;
+    ctx.setLineDash([8, 5]); ctx.lineWidth = 2.5; ctx.strokeStyle = '#ff2d3c'; ctx.strokeRect(x + 4, y + 4, w - 8, h - 8); ctx.setLineDash([]);
+    tag(x + 8, y + fs + 8, `${id.toUpperCase()} 未検出（規格上の位置）`, '#ff2d3c');
   }
+  for (const d of debug) {
+    const col = !d.ok ? '#ff5d6c' : d.label.startsWith('PARTS') ? '#ffb547' : d.label.startsWith('JOINT') ? '#ff5dd6' : '#36e3c4';
+    const x = d.box.x0 * s, y = d.box.y0 * s, w = (d.box.x1 - d.box.x0) * s, h = (d.box.y1 - d.box.y0) * s;
+    ctx.setLineDash(d.ok ? [] : [4, 3]); ctx.lineWidth = d.ok ? 2.5 : 1.5; ctx.strokeStyle = col; ctx.strokeRect(x, y, w, h); ctx.setLineDash([]);
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x + w / 2, y + h / 2, 3, 0, Math.PI * 2); ctx.fill(); // 中心点
+    if (d.ok) tag(x, y + fs, d.label.replace('PARTS:', ''), col);
+  }
+  for (const m of markers) {
+    ctx.lineWidth = 2; ctx.strokeStyle = m.ok ? '#36e3c4' : '#ff5d6c';
+    ctx.beginPath(); ctx.arc(m.x * s, m.y * s, Math.max(4, m.r * s + 2), 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = ctx.strokeStyle; ctx.beginPath(); ctx.arc(m.x * s, m.y * s, 1.5, 0, Math.PI * 2); ctx.fill();
+    if (m.ok) { ctx.font = `bold ${Math.round(fs * 0.75)}px sans-serif`; ctx.fillStyle = '#fff'; ctx.fillText(m.label, m.x * s + m.r * s + 4, m.y * s + 3); ctx.font = `bold ${fs}px sans-serif`; }
+  }
+  for (const j of missingJoints) {
+    const x = j.x * s, y = j.y * s, r = 6;
+    ctx.lineWidth = 2.5; ctx.strokeStyle = '#ff2d3c';
+    ctx.beginPath(); ctx.moveTo(x - r, y - r); ctx.lineTo(x + r, y + r); ctx.moveTo(x + r, y - r); ctx.lineTo(x - r, y + r); ctx.stroke();
+    ctx.font = `bold ${Math.round(fs * 0.75)}px sans-serif`; ctx.fillStyle = '#ff2d3c'; ctx.fillText(j.id, x + r + 2, y + 3); ctx.font = `bold ${fs}px sans-serif`;
+  }
+  // 判定の一覧（文字）
+  const add = (ok: boolean, t: string) => { const d = document.createElement('div'); d.className = ok ? 'dok' : 'dng'; d.textContent = (ok ? '✓ ' : '✕ ') + t; list.appendChild(d); };
+  for (const id of missingViews) add(false, `${id.toUpperCase()}：見つかりません`);
+  for (const d of debug.filter(x => x.ok)) add(true, `${d.label}：${d.reason ?? ''}`);
+  for (const j of missingJoints) add(false, `${j.id}：マーカーが見つかりません（✕は推定位置）`);
+  for (const m of markers.filter(x => !x.ok)) add(false, `マーカー候補 ${m.label}：${m.reason}`);
+  for (const d of debug.filter(x => !x.ok)) add(false, `候補（${Math.round(d.box.x0)},${Math.round(d.box.y0)} 幅${Math.round(d.box.x1 - d.box.x0)} 高${Math.round(d.box.y1 - d.box.y0)}px）：${d.reason ?? ''}`);
 }
 
 function renderResult() {
-  drawRegions($('#reg1') as HTMLCanvasElement, state.img1, state.s1?.regions ?? []);
-  drawRegions($('#reg2') as HTMLCanvasElement, state.img2, state.s2?.regions ?? []);
+  const missingViews = VIEW_IDS.filter(id => !state.s1?.views[id]);
+  drawDebug($('#reg1') as HTMLCanvasElement, $('#dbg1'), state.img1, state.s1?.debug ?? [], [], missingViews, []);
+  const s2 = state.s2;
+  const missingJ = s2 && s2.front && state.detected
+    ? ALL_JOINTS.filter(id => !s2.joints[id]).map(id => { const d = denorm(s2.front!.src, state.detected![id].x, state.detected![id].y); return { id, x: s2.front!.box.x0 + d.px, y: s2.front!.box.y0 + d.py }; })
+    : [];
+  drawDebug($('#reg2') as HTMLCanvasElement, $('#dbg2'), state.img2, s2?.debug ?? [], s2?.markers ?? [], [], missingJ);
   const g = $('#viewGrid'); g.innerHTML = '';
   const W = state.s1?.views.front ? state.s1.views.front.src.w / state.s1.views.front.src.h : 1;
   const add = (label: string, view: { src: SourceImage; raw: HTMLCanvasElement } | undefined, kind: 'side' | 'top' | 'part' = 'side', partId?: PartId) => {

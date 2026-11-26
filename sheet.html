@@ -40,7 +40,7 @@
     </div>
     <div class="row2 gap">
       <button class="secondary" id="btnSample">サンプルで試す</button>
-      <a class="secondary" href="./docs/SHEET_SPEC_V1.md" target="_blank">規格書（Sheet V1）</a>
+      <a class="secondary" href="./docs/MACHINE_SPEC_V1.md" target="_blank">機械解析仕様書</a>
     </div>
     <p class="note">透明PNGは「ファイルを選択」から選ぶと透過が保たれます。</p>
     <button class="primary" id="btnAnalyze" disabled>解析</button>
@@ -48,8 +48,12 @@
 
   <section class="card" id="secResult" hidden>
     <h2><i>2</i>解析結果</h2>
-    <div class="cap">検出した領域（シート上の位置）</div>
-    <div class="regionPair"><canvas id="reg1"></canvas><canvas id="reg2"></canvas></div>
+    <div class="cap">解析デバッグ表示：SHEET 1（緑＝採用、赤＝不採用・未検出）</div>
+    <canvas class="dbgCanvas" id="reg1"></canvas>
+    <details class="dbgList"><summary>SHEET 1 の判定一覧</summary><div id="dbg1"></div></details>
+    <div class="cap">解析デバッグ表示：SHEET 2（○＝検出したマーカー、✕＝見つからない関節）</div>
+    <canvas class="dbgCanvas" id="reg2"></canvas>
+    <details class="dbgList"><summary>SHEET 2 の判定一覧</summary><div id="dbg2"></div></details>
     <div class="seg small" id="previewMode">
       <button data-v="raw">元画像</button><button data-v="mask" class="on">抽出シルエット</button><button data-v="norm">正規化後</button>
     </div>
