@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild src/main.ts --bundle --format=esm --minify --target=es2020,safari15 --outfile=app.js && esbuild src/sheet.ts --bundle --format=esm --minify --target=es2020,safari15 --outfile=sheet.js && esbuild src/sample.ts --bundle --format=esm --minify --target=es2020,safari15 --outfile=sample.js && esbuild src/base.ts --bundle --format=esm --minify --target=es2020,safari15 --outfile=base.js && esbuild src/fitUI.ts --bundle --format=esm --minify --target=es2020,safari15 --outfile=fit.js"
+    "build": "esbuild src/main.ts --bundle --format=esm --minify --target=es2020,safari15 --outfile=app.js && esbuild src/sheet.ts --bundle --format=esm --minify --target=es2020,safari15 --outfile=sheet.js && esbuild src/sample.ts --bundle --format=esm --minify --target=es2020,safari15 --outfile=sample.js && esbuild src/base.ts --bundle --format=esm --minify --target=es2020,safari15 --outfile=base.js && esbuild src/fitUI.ts --bundle --format=esm --minify --target=es2020,safari15 --outfile=fit.js && esbuild src/rigUI.ts --bundle --format=esm --minify --target=es2020,safari15 --outfile=rig.js"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",

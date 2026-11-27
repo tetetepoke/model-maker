@@ -1,0 +1,41 @@
+/* ---- Phase 4：JOINT & RIG 作業画面（sheet.html の追加部分だけに効く） ---- */
+body.rigOpen { overflow: hidden; }
+.rigApp { position: fixed; inset: 0; z-index: 60; background: #0a0d12; display: flex; flex-direction: column; }
+.rigApp[hidden] { display: none; }
+.rigTop { display: flex; align-items: center; gap: 10px; padding: calc(env(safe-area-inset-top) + 8px) 12px 8px; border-bottom: 1px solid var(--line); font-size: 13px; letter-spacing: .06em; }
+.rigTop span { color: var(--acc); font-weight: 700; flex: 1; }
+.rigTop button { padding: 9px 16px; border-radius: 10px; border: 1px solid var(--line); background: #121821; font-size: 14px; }
+.rigStage { position: relative; height: 48vh; min-height: 250px; touch-action: none; border-bottom: 1px solid var(--line); }
+.rigStage canvas { display: block; width: 100%; height: 100%; }
+.rigInfo { position: absolute; top: 8px; left: 10px; font-size: 11px; color: var(--dim); background: rgba(10,14,20,.7); padding: 2px 8px; border-radius: 6px; pointer-events: none; }
+.rigViews { position: absolute; left: 6px; right: 6px; bottom: 6px; display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.rigViews button { padding: 9px 0; font-size: 11px; font-weight: 700; background: rgba(10,14,20,.85); border: 1px solid var(--line); border-radius: 9px; }
+.rigViews button.on { color: var(--acc); border-color: var(--acc); }
+.rigPanel { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 8px 12px calc(env(safe-area-inset-bottom) + 24px); }
+.rigBlock { border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; margin: 8px 0; background: #0f141b; }
+.rigBlock.disabled { opacity: .45; pointer-events: none; }
+.rigBlock h3 { margin: 4px 0 8px; font-size: 12px; letter-spacing: .12em; color: var(--acc); }
+.rigBtn { display: block; width: 100%; min-height: 46px; margin: 6px 0; border-radius: 12px; border: 1px solid var(--line); background: #121821; font-size: 15px; font-weight: 700; letter-spacing: .04em; }
+.rigBtn.primary { background: linear-gradient(90deg, #2fe0c0, #4fb8ff); color: #061016; border: none; }
+.rigBtn.on { border-color: var(--acc); color: var(--acc); }
+.rigBtn:disabled { opacity: .4; }
+.rigRow2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.rigRow2 .rigBtn { font-size: 13px; }
+.rigNote { font-size: 12px; color: var(--dim); margin: 6px 0; line-height: 1.5; }
+.rigNote .ok { color: var(--acc); } .rigNote .ng { color: #ff9b6b; }
+.rigChecks { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; font-size: 14px; }
+.rigChecks label, .rigMirror { display: flex; align-items: center; gap: 7px; min-height: 32px; }
+.rigChecks input, .rigMirror input { width: 20px; height: 20px; }
+.rigRow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.rigRow select { flex: 1; min-width: 150px; min-height: 44px; font-size: 16px; background: #0b0f14; border: 1px solid var(--line); border-radius: 10px; color: inherit; padding: 0 8px; }
+.rStep { display: grid; grid-template-columns: 18px 46px 1fr 62px 46px; gap: 8px; align-items: center; margin: 8px 0; }
+.rStep b { color: var(--dim); }
+.rStep button { height: 44px; border-radius: 10px; border: 1px solid var(--line); background: #121821; font-size: 20px; }
+.rStep input[type=range] { width: 100%; height: 32px; }
+.rStep span { font-variant-numeric: tabular-nums; text-align: right; font-size: 14px; }
+.rigPresets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin: 8px 0; }
+.rigPresets button { min-height: 46px; border-radius: 11px; border: 1px solid var(--line); background: #0d1218; font-weight: 700; font-size: 13px; }
+.rigPresets button.on { border-color: var(--acc); color: var(--acc); background: #12302d; }
+.rigPresets button.reset { grid-column: 1 / -1; }
+.rigBoneName { font-weight: 700; font-size: 14px; margin-top: 6px; }
+.rigToast { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 18px); background: #13202a; border: 1px solid var(--acc); color: #e9fbf7; border-radius: 12px; padding: 12px 14px; font-size: 14px; z-index: 70; }

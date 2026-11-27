@@ -8,6 +8,7 @@
 <title>ELEMENT 118 SHEET → 3D</title>
 <link rel="stylesheet" href="./style.css">
 <link rel="stylesheet" href="./fit.css">
+<link rel="stylesheet" href="./rig.css">
 </head>
 <body>
 <header class="top">
@@ -120,10 +121,73 @@
       <button class="secondary wide" id="btnFitSave" hidden>e118_fitted_body.glb を保存</button>
     </div>
   </section>
+  <section class="card" id="secRig">
+    <h2><i>6</i>Joint &amp; Rig（Phase 4）</h2>
+    <p class="note">関節の3D位置を決めて骨格を入れ、実際に関節を動かして変形を確認します。5 のフィッティング結果があればそれを使い、無ければ Standard Base Mesh V1 で確認できます。全画面の作業画面で開きます。</p>
+    <button class="primary" id="btnRigOpen">JOINT &amp; RIG を開く</button>
+    <p class="note" id="rigSavedCard"></p>
+  </section>
 </main>
+<div class="rigApp" id="rigApp" hidden>
+  <div class="rigTop"><b>6. JOINT &amp; RIG</b><span id="rigMode">JOINT EDIT</span><button id="rigClose">閉じる</button></div>
+  <div class="rigStage" id="rigStage">
+    <div class="rigInfo" id="rigSource"></div>
+    <div class="rigViews" id="rigViews"><button data-v="front">FRONT</button><button data-v="right">RIGHT</button><button data-v="back">BACK</button><button data-v="left">LEFT</button><button data-v="top">TOP</button><button data-v="free">FREE</button></div>
+  </div>
+  <div class="rigPanel">
+    <div class="rigBlock">
+      <h3>VIEW</h3>
+      <div class="rigChecks">
+        <label><input type="checkbox" id="rvMesh" checked>Base Mesh</label>
+        <label><input type="checkbox" id="rvSkel" checked>Skeleton</label>
+        <label><input type="checkbox" id="rvJoint" checked>Joint Markers</label>
+        <label><input type="checkbox" id="rvSheets">Original Sheets</label>
+        <label><input type="checkbox" id="rvHull">Visual Hull</label>
+        <label><input type="checkbox" id="rvWeight">Weight View</label>
+      </div>
+      <p class="rigNote" id="rvWeightNote" hidden></p>
+    </div>
+    <div class="rigBlock" id="rigEditBox">
+      <h3>JOINT DETECTION</h3>
+      <button class="rigBtn primary" id="btnAutoJoint">AUTO JOINT</button>
+      <p class="rigNote" id="rjStatus">SHEET 2 の関節＋各方向のシルエット＋Visual Hull から17関節の3D位置を推定します。</p>
+      <h3>JOINT EDIT</h3>
+      <p class="rigNote">関節の球をタップして選択。iPhone は選んだ球を指でドラッグ、または下の −／＋・スライダーで調整します。</p>
+      <div class="rigRow"><select id="rjSel"></select><label class="rigMirror"><input type="checkbox" id="rjMirror" checked>左右対称に動かす</label></div>
+      <div id="rjRows"></div>
+      <p class="rigNote" id="rjNote"></p>
+    </div>
+    <div class="rigBlock">
+      <h3>RIG</h3>
+      <button class="rigBtn primary" id="btnAutoRig">AUTO RIG</button>
+      <p class="rigNote" id="rrStatus">メッシュを SkinnedMesh にして、17ボーンを Bind し、スキンウェイトを計算します。</p>
+    </div>
+    <div class="rigBlock">
+      <h3>TEST</h3>
+      <button class="rigBtn" id="btnPose" disabled>POSE TEST</button>
+      <div id="rigPoseBox" hidden>
+        <div class="rigPresets" id="rigPresets"></div>
+        <p class="rigNote">関節の球をタップすると、そのボーンを回転できます。</p>
+        <div class="rigBoneName" id="rpBone"></div>
+        <div id="rpRows"></div>
+      </div>
+    </div>
+    <div class="rigBlock">
+      <h3>SAVE</h3>
+      <button class="rigBtn primary" id="btnSaveRig">SAVE RIG</button>
+      <div class="rigRow2"><button class="rigBtn" id="btnRestore">保存した Rig を復元</button><button class="rigBtn" id="btnRigJson">Rig JSON を書き出す</button></div>
+      <p class="rigNote" id="rsNote"></p>
+      <button class="rigBtn" id="btnRigGlb">GLB を書き出して確認</button>
+      <p class="rigNote" id="rsGlb"></p>
+      <button class="rigBtn" id="btnGlbSave" hidden>e118_rigged_body.glb を保存</button>
+    </div>
+  </div>
+  <div class="rigToast" id="rigToast" hidden></div>
+</div>
 
 <div class="toast" id="toast" hidden></div>
 <script type="module" src="./sheet.js"></script>
 <script type="module" src="./fit.js"></script>
+<script type="module" src="./rig.js"></script>
 </body>
 </html>

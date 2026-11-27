@@ -27,7 +27,8 @@ Element 118 Sheet V1 規格（`docs/SHEET_SPEC_V1.md`）の2枚の設計シー�
 
 実装済み：Phase 1（規格・読み込み・解析）、Phase 2（Visual Hull・重ね合わせ比較）、Standard Base Mesh V1（下記）
 実装済み：Phase 3 Visual Hull → Base Mesh V1 フィッティング（sheet.html の 5、仕様 `docs/PHASE3_FIT_V1.md`）
-次：外見（SHEET 1 の色・顔・服・髪・装備）→ Rig / Motion → ゲーム用 GLB
+実装済み：Phase 4 Joint / Rig / Pose Test（sheet.html の 6、仕様 `docs/PHASE4_RIG_V1.md`）
+次：外見（SHEET 1 の色・顔・服・髪・装備）→ Motion → ゲーム用 GLB
 すべてブラウザ内の画像解析＋幾何計算（AI・外部API・GPUサーバー不使用）。`sample.html` はサンプルシート生成用の開発ページ。
 
 ## Element 118 Standard Base Mesh V1（base.html）

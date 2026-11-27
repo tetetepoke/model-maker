@@ -59,7 +59,7 @@ function rotBetween(a: V3, b: V3): M3 {
 const stretch = (d: V3, k: number): M3 => [0, 1, 2].flatMap(i => [0, 1, 2].map(j => (i === j ? 1 : 0) + (k - 1) * d[i] * d[j]));
 
 // ------------------------------------------------------------------ シルエット（Visual Hull と同じ座標の決め方）
-class Silhouettes {
+export class Silhouettes {
   constructor(private v: Partial<Record<ViewId, SourceImage>>, private W: number, private D: number) {}
   private sideHit(s: SourceImage, mirror: boolean, u: number, v: number) {
     const px = Math.floor((mirror ? -u : u) * s.h + s.w / 2), py = Math.floor((1 - v) * s.h);
