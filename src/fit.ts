@@ -21,7 +21,7 @@ import { buildBaseMeshData, BONES_V1, type BaseMeshData } from './basemesh';
 type V3 = [number, number, number];
 export type FitJoints = Record<JointId, { x: number; y: number; z: number }>;
 export interface FitInput { joints: FitJoints; views: Partial<Record<ViewId, SourceImage>>; W: number; D: number }
-export interface FitStage { id: string; label: string; pos: Float32Array }
+export interface FitStage { id: string; label: string; pos: Float32Array; rough: number; flipped: number }
 export interface FitResult {
   stages: FitStage[];
   /** 完成した形（GLB の頂点の並び） */
@@ -329,6 +329,24 @@ function measure(m: Mesh, P: V3[], F: Frame[], T: Record<Pt, V3>, sil: Silhouett
   });
 }
 const median = (a: number[]) => { const v = a.filter(x => !isNaN(x)).sort((p, q) => p - q); return v.length ? v[v.length >> 1] : 1; };
+/** 胴（腰・背骨・胸）、上腕＋前腕、太もも＋すねは、ボーンの境目でも太さがなめらかにつながるよう、輪切りをつなげてならす */
+function chainSmooth(f: Factors) {
+  for (const chain of [[0, 1, 2], [5, 6], [8, 9], [11, 12], [14, 15]]) for (let q = 0; q < 2; q++) for (let side = 0; side < 2; side++) {
+    const all = chain.flatMap(b => f[b][q][side]);
+    let cur = all;
+    for (let p = 0; p < 3; p++) cur = cur.map((x, i) => 0.25 * cur[Math.max(0, i - 1)] + 0.5 * x + 0.25 * cur[Math.min(all.length - 1, i + 1)]);
+    let k = 0;
+    for (const b of chain) for (let i = 0; i < f[b][q][side].length; i++) f[b][q][side][i] = cur[k++];
+  }
+}
+/** 3つ並びの中央値（1枚だけ飛び出した輪切りを消す） */
+function median3(a: number[]): number[] {
+  return a.map((x, i) => {
+    if (isNaN(x)) return x;
+    const w = [a[i - 1], x, a[i + 1]].filter(v => v !== undefined && !isNaN(v)).sort((p, q) => p - q);
+    return w.length === 3 ? w[1] : x;
+  });
+}
 function fillSmooth(a: number[], passes: number): number[] {
   const N = a.length, v = a.slice();
   const valid = v.map(x => !isNaN(x));
@@ -369,41 +387,100 @@ function applyFactors(m: Mesh, P: V3[], F: Frame[], fac: Factors): V3[] {
 }
 
 // ------------------------------------------------------------------ 4. Visual Hull 表面
-function surfaceFit(m: Mesh, P: V3[], sil: Silhouettes, iters: number): V3[] {
+/** Visual Hull はボクセルで削った形なので、細かい角や段差がある。境界から TOL までのはみ出しは許す */
+const TOL = 0.006;
+function nearInside(sil: Silhouettes, p: V3, n: V3) { return sil.inside(p) || sil.inside(add(p, mul(n, -TOL))); }
+/** 隣の平均へ寄せる（ラプラシアン）を1回 */
+function lap(m: Mesh, P: V3[], k: number): V3[] {
+  return P.map((p, i) => {
+    const nb = m.nb[i]; let a: V3 = [0, 0, 0];
+    for (const j of nb) a = add(a, P[j]);
+    return add(p, mul(sub(mul(a, 1 / nb.length), p), k));
+  });
+}
+/** Taubin 平滑化：細かい凸凹だけを消し、全体は縮ませない */
+function taubin(m: Mesh, P: V3[], iters: number): V3[] {
+  let cur = P;
+  for (let i = 0; i < iters; i++) { cur = lap(m, cur, 0.5); cur = lap(m, cur, -0.53); }
+  return cur;
+}
+/** 移動量（ベクトル場）をならす */
+function smoothField(m: Mesh, D: V3[], passes: number, self = 0.5): V3[] {
+  let cur = D;
+  for (let s = 0; s < passes; s++) cur = cur.map((d, i) => {
+    const nb = m.nb[i]; let a: V3 = [0, 0, 0];
+    for (const j of nb) a = add(a, cur[j]);
+    return add(mul(d, self), mul(a, (1 - self) / nb.length));
+  });
+  return cur;
+}
+
+/** 新しい位置で裏返る面があれば、その面の頂点（と隣）だけ元の位置に戻す */
+function keepOriented(m: Mesh, prev: V3[], next: V3[], refN: V3[] | null): V3[] {
+  if (!refN) return next;
+  let cur = next;
+  for (let pass = 0; pass < 4; pass++) {
+    const fn = faceNormals(cur, m.quads);
+    const back = new Set<number>();
+    for (let k = 0; k < fn.length; k++) if (dot(fn[k], refN[k]) < 0.1 && dot(faceNormalsOne(prev, m.quads, k), refN[k]) >= 0.1) {
+      for (let j = 0; j < 4; j++) { const v = m.quads[k * 4 + j]; back.add(v); if (pass) for (const u of m.nb[v]) back.add(u); }
+    }
+    if (!back.size) break;
+    cur = cur.map((p, i) => back.has(i) ? prev[i] : p);
+  }
+  return cur;
+}
+function faceNormalsOne(P: V3[], quads: Uint32Array, k: number): V3 {
+  return norm(cross(sub(P[quads[k * 4 + 2]], P[quads[k * 4]]), sub(P[quads[k * 4 + 3]], P[quads[k * 4 + 1]])));
+}
+
+function surfaceFit(m: Mesh, P: V3[], sil: Silhouettes, iters: number, refN: V3[] | null = null): V3[] {
   let cur = P;
   for (let it = 0; it < iters; it++) {
     const N = quadNormals(cur, m.quads);
     const disp: V3[] = cur.map((p, i) => {
       const n = N[i];
-      if (!sil.inside(p)) {
-        // はみ出し：内側へ戻す（最大 0.05）
-        for (let t = 0.002; t <= 0.05; t += 0.002) { const q = add(p, mul(n, -t)); if (sil.inside(q)) return mul(n, -t); }
+      if (!nearInside(sil, p, n)) {
+        // 大きくはみ出し：境界から TOL の所まで内側へ戻す（最大 0.05）
+        for (let t = TOL + 0.002; t <= 0.05; t += 0.002) { if (sil.inside(add(p, mul(n, -t)))) return mul(n, -(t - TOL)); }
         return [0, 0, 0];
       }
-      // 内側：外側の境界が近いときだけ少し寄せる（装備で太らせないため上限 0.012）
-      for (let t = 0.002; t <= 0.012; t += 0.002) { if (!sil.inside(add(p, mul(n, t)))) return mul(n, (t - 0.002) * 0.7); }
+      if (!sil.inside(p)) return [0, 0, 0];
+      // 内側：外側の境界がすぐ近い（0.008 以内）ときだけ半分だけ寄せる（装備・角で太らせない）
+      for (let t = 0.002; t <= 0.008; t += 0.002) { if (!sil.inside(add(p, mul(n, t)))) return mul(n, (t - 0.002) * 0.5); }
       return [0, 0, 0];
     });
-    // 移動量をならす（隣とのつながりを保つ）
-    let D = disp;
-    for (let s = 0; s < 2; s++) D = D.map((d, i) => {
-      const nb = m.nb[i]; let a: V3 = [0, 0, 0];
-      for (const j of nb) a = add(a, D[j]);
-      return add(mul(d, 0.5), mul(a, 0.5 / nb.length));
-    });
-    cur = cur.map((p, i) => add(p, D[i]));
+    // 移動量を広くならす（隣とのつながり・なめらかさを保つ）
+    const D = smoothField(m, disp, 6);
+    cur = keepOriented(m, cur, cur.map((p, i) => add(p, D[i])), refN);
   }
   return cur;
 }
 
 // ------------------------------------------------------------------ 5. Smoothing / regularization
 /** 裏返った面（refN と逆向き）の頂点だけを、隣の平均へ寄せてほどく */
+/** 凸凹の量：各頂点が隣の平均から法線方向にどれだけ出っ張り／へこんでいるか（平均、身長比） */
+export function roughness(m: { n: number; nb: number[][]; quads: Uint32Array }, P: V3[]): number {
+  const N = quadNormals(P, m.quads);
+  let s = 0;
+  for (let i = 0; i < m.n; i++) {
+    let a: V3 = [0, 0, 0]; for (const j of m.nb[i]) a = add(a, P[j]);
+    s += Math.abs(dot(sub(P[i], mul(a, 1 / m.nb[i].length)), N[i]));
+  }
+  return s / m.n;
+}
+
+const countFlips = (a: V3[], b: V3[]) => { let c = 0; for (let k = 0; k < a.length; k++) if (dot(a[k], b[k]) < 0) c++; return c; };
+
 function untangle(m: Mesh, P: V3[], refN: V3[]): V3[] {
   let cur = P;
-  for (let it = 0; it < 20; it++) {
+  for (let it = 0; it < 50; it++) {
     const fn = faceNormals(cur, m.quads);
     const bad = new Set<number>();
-    for (let k = 0; k < fn.length; k++) if (dot(fn[k], refN[k]) < 0.2) for (let j = 0; j < 4; j++) { const v = m.quads[k * 4 + j]; bad.add(v); for (const u of m.nb[v]) bad.add(u); }
+    for (let k = 0; k < fn.length; k++) if (dot(fn[k], refN[k]) < 0) for (let j = 0; j < 4; j++) {
+      const v = m.quads[k * 4 + j]; bad.add(v);
+      for (const u of m.nb[v]) { bad.add(u); if (it >= 10) for (const w of m.nb[u]) bad.add(w); } // ほどけないときは範囲を広げる
+    }
     if (!bad.size) break;
     const prev = cur;
     cur = prev.map((p, i) => {
@@ -415,26 +492,29 @@ function untangle(m: Mesh, P: V3[], refN: V3[]): V3[] {
   return cur;
 }
 
-function regularize(m: Mesh, P: V3[], ref: V3[], sil: Silhouettes, orientRef: V3[]): V3[] {
-  // ref（太さ合わせ後）の形の細かさを残したまま、移動量だけをならす
-  let D: V3[] = P.map((p, i) => sub(p, ref[i]));
-  for (let s = 0; s < 3; s++) D = D.map((d, i) => {
-    const nb = m.nb[i]; let a: V3 = [0, 0, 0];
-    for (const j of nb) a = add(a, D[j]);
-    return add(mul(d, 0.6), mul(a, 0.4 / nb.length));
-  });
-  let out = ref.map((p, i) => add(p, D[i]));
+function regularize(m: Mesh, P: V3[], ref: V3[], sil: Silhouettes, orientRef: V3[], sym: ((P: V3[]) => V3[]) | null): V3[] {
+  // ref（太さ合わせ後）からの移動量だけを広くならす
   const refN = faceNormals(orientRef, m.quads);
-  // 仕上げ：裏返りをほどき、まだはみ出している頂点だけ法線の内側へ戻す
-  for (let it = 0; it < 6; it++) {
+  const D = smoothField(m, P.map((p, i) => sub(p, ref[i])), 8, 0.5);
+  let out = keepOriented(m, P, ref.map((p, i) => add(p, D[i])), refN);
+  // 細かい凸凹を消す（全体は縮ませない）
+  out = keepOriented(m, out, taubin(m, out, 10), refN);
+  if (sym) out = keepOriented(m, out, sym(out), refN);
+  // 仕上げ：裏返りをほどき、大きくはみ出した頂点だけ境界近くまで戻して、もう一度軽くならす
+  for (let it = 0; it < 4; it++) {
     out = untangle(m, out, refN);
     const N = quadNormals(out, m.quads);
+    const before = out;
     out = out.map((p, i) => {
-      if (sil.inside(p)) return p;
-      for (let t = 0.002; t <= 0.05; t += 0.002) { const q = add(p, mul(N[i], -t)); if (sil.inside(q)) return q; }
+      if (nearInside(sil, p, N[i])) return p;
+      for (let t = TOL + 0.002; t <= 0.05; t += 0.002) { const q = add(p, mul(N[i], -(t - TOL))); if (sil.inside(add(p, mul(N[i], -t)))) return q; }
       return p;
     });
+    out = keepOriented(m, before, out, refN);
+    if (it < 3) out = keepOriented(m, out, taubin(m, out, 2), refN);
   }
+  if (sym) out = keepOriented(m, out, sym(out), refN);
+  out = untangle(m, out, refN);
   return out;
 }
 
@@ -474,6 +554,25 @@ export function silhouetteIoU(P: ArrayLike<number>, index: ArrayLike<number>, vi
   return out;
 }
 
+// ------------------------------------------------------------------ 左右対称
+/** 関節が左右対称なキャラなら、体の中心面で左右の頂点を平均する関数を返す（V1 は完全な左右対称なので鏡の相手が決まる） */
+function symmetrizer(m: Mesh, T: Record<Pt, V3>): ((P: V3[]) => V3[]) | null {
+  const pairs: [JointId, JointId][] = [['SHOULDER_L', 'SHOULDER_R'], ['ELBOW_L', 'ELBOW_R'], ['WRIST_L', 'WRIST_R'], ['HIP_L', 'HIP_R'], ['KNEE_L', 'KNEE_R'], ['ANKLE_L', 'ANKLE_R']];
+  const c = pairs.reduce((a, [l, r]) => a + (T[l][0] + T[r][0]) / 2, 0) / pairs.length;
+  const asym = pairs.reduce((a, [l, r]) => a + Math.abs((T[l][0] - c) + (T[r][0] - c)) + Math.abs(T[l][1] - T[r][1]) + Math.abs(T[l][2] - T[r][2]), 0) / pairs.length;
+  if (asym > 0.02) return null;
+  const key = (x: number, y: number, z: number) => `${Math.round(x * 1e4)},${Math.round(y * 1e4)},${Math.round(z * 1e4)}`;
+  const idx = new Map<string, number>();
+  m.P.forEach((p, i) => idx.set(key(p[0], p[1], p[2]), i));
+  const mir = m.P.map((p, i) => idx.get(key(-p[0], p[1], p[2])) ?? i);
+  if (mir.filter((j, i) => j === i && Math.abs(m.P[i][0]) > 1e-4).length > m.n * 0.01) return null;
+  return (P: V3[]) => P.map((p, i) => {
+    const q = P[mir[i]];
+    if (mir[i] === i) return [c, p[1], p[2]] as V3;
+    return [(p[0] + (2 * c - q[0])) / 2, (p[1] + q[1]) / 2, (p[2] + q[2]) / 2] as V3;
+  });
+}
+
 // ------------------------------------------------------------------ 本体
 export function fitBaseMesh(inp: FitInput): FitResult {
   const t0 = performance.now();
@@ -483,12 +582,15 @@ export function fitBaseMesh(inp: FitInput): FitResult {
   const B = basePoints(d, m), T = targetPoints(inp, B, sil);
   const clampedLog = new Set<string>();
   const stages: FitStage[] = [];
-  const snap = (id: string, label: string, P: V3[]) => { const a = new Float32Array(m.n * 3); P.forEach((p, i) => a.set(p, i * 3)); stages.push({ id, label, pos: a }); };
+  const snap = (id: string, label: string, P: V3[]) => { const a = new Float32Array(m.n * 3); P.forEach((p, i) => a.set(p, i * 3)); stages.push({ id, label, pos: a, rough: roughness(m, P), flipped: refFN ? countFlips(refFN, faceNormals(P, m.quads)) : 0 }); };
+  let refFN: V3[] | null = null;
   snap('base', '0. Base Mesh V1（そのまま）', m.P);
 
+  const sym = symmetrizer(m, T);
   // 1
   let P = jointAlign(m, B, T);
   const afterJoint = P;
+  refFN = faceNormals(P, m.quads);
   snap('joint', '1. Joint alignment', P);
   const F = frames(T);
   // 2：部位ごとに1つの倍率
@@ -497,24 +599,28 @@ export function fitBaseMesh(inp: FitInput): FitResult {
   P = applyFactors(m, P, F, prop);
   snap('proportion', '2. Body proportion', P);
   // 3：輪切りごと（なめらかにつなぐ）
-  const loc = measure(m, P, F, T, sil, clampedLog).map(bq => bq.map(sides => sides.map(sl => fillSmooth(sl, 2))));
+  const loc = measure(m, P, F, T, sil, clampedLog).map(bq => bq.map(sides => sides.map(sl => fillSmooth(median3(sl), 4))));
+  chainSmooth(loc);
   P = applyFactors(m, P, F, loc);
+  if (sym) P = sym(P);
+  P = untangle(m, P, refFN!); // 脇・股の付け根で面が裏返らないように
   const afterLocal = P;
   snap('local', '3. Local body-part', P);
   // 4
   const outsideBefore = P.filter(p => !sil.inside(p)).length;
-  P = surfaceFit(m, P, sil, 4);
+  P = surfaceFit(m, P, sil, 4, refFN);
   snap('surface', '4. Visual Hull surface', P);
   // 5
-  P = regularize(m, P, afterLocal, sil, afterJoint);
+  P = regularize(m, P, afterLocal, sil, afterJoint, sym);
   snap('final', '5. Smoothing / regularization（完成）', P);
-  const outsideAfter = P.filter(p => !sil.inside(p)).length;
+  const NF = quadNormals(P, m.quads);
+  const outsideAfter = P.filter((p, i) => !nearInside(sil, p, NF[i])).length;
 
   // 裏返った面（関節合わせ直後との比較）
   const fa = faceNormals(stages[1].pos.length ? toV3(stages[1].pos) : m.P, m.quads), fb = faceNormals(P, m.quads);
   let flipped = 0; const detail = { flipped: {} as Record<string, number>, outside: {} as Record<string, number> };
   for (let k = 0; k < fa.length; k++) if (dot(fa[k], fb[k]) < 0) { flipped++; const pn = d.quadPart[k]; detail.flipped[pn] = (detail.flipped[pn] ?? 0) + 1; }
-  P.forEach((p, i) => { if (!sil.inside(p)) { const bn = BONES_V1[m.dom[i]].name; detail.outside[bn] = (detail.outside[bn] ?? 0) + 1; } });
+  P.forEach((p, i) => { if (!nearInside(sil, p, NF[i])) { const bn = BONES_V1[m.dom[i]].name; detail.outside[bn] = (detail.outside[bn] ?? 0) + 1; } });
   let maxMove = 0; P.forEach((p, i) => { maxMove = Math.max(maxMove, len(sub(p, m.P[i]))); });
 
   // GLB の頂点の並びへ（UV の継ぎ目で分かれた頂点は同じ位置）
